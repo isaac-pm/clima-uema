@@ -1,55 +1,19 @@
 """
-Costa Rican Emergency Alert PDF Processor.
+Emergency alert PDF extraction module.
 
-Processes PDF emergency alerts from IMN (Instituto Meteorológico Nacional)
-using docling for PDF extraction and vLLM for structured data extraction.
+This module extracts structured data from Costa Rican emergency weather alert PDFs
+using a two-stage pipeline:
+1. PDF text extraction via docling
+2. Structured data extraction via Google Gemini LLM
 
-================================================================================
-USAGE INSTRUCTIONS
-================================================================================
+The extracted alerts include alert level (Green/Yellow/Orange/Red/Cancellation),
+meteorological events, affected regions, and signing authorities. Results are
+saved to CSV format.
 
-Prerequisites:
-    1. Install dependencies:
-        pip install -r requirements.txt
-
-    2. Start vLLM server with a suitable model for your hardware.
-       For RTX 2050 + 32GB RAM, recommended models:
-        - qwen/qwen2.5-1.5b-instruct (fast, good quality)
-        - qwen/qwen2.5-3b-instruct (better quality, slower)
-        - llama3.2-3b-instruct (good alternative)
-
-    Example vLLM startup:
-        vllm serve qwen/qwen2.5-1.5b-instruct --dtype half
-
-Basic Usage:
-    python preprocessing/extract_alerts.py
-
-Process specific year:
-    python preprocessing/extract_alerts.py --year 2024
-
-Process single year with verbose output:
-    python preprocessing/extract_alerts.py --year 2025 -v
-
-Custom vLLM settings:
-    python preprocessing/extract_alerts.py --vllm-url http://localhost:8000/v1 --vllm-model qwen/qwen2.5-1.5b-instruct
-
-Arguments:
-    --input-dir    Directory containing PDF files (default: data/emergency_alerts/raw)
-    --output-csv   Output CSV file path (default: data/emergency_alerts/processed/alerts_data.csv)
-    --year         Filter by year subdirectory: 2024, 2025, or 2026
-    --vllm-url     vLLM API base URL (default: http://localhost:8000/v1)
-    --vllm-model   vLLM model name (default: qwen/qwen2.5-1.5b-instruct)
-
-Output:
-    - CSV file with extracted alert data
-    - Log file: alert_processing.log
-    - Failed PDFs log: data/emergency_alerts/processed/failed_pdfs.txt
-
-Notes:
-    - The script processes PDFs incrementally and appends to CSV
-    - Failed PDFs are logged with timestamps for retry
-    - Use Ctrl+C to safely interrupt processing
-================================================================================
+Usage:
+    python -m preprocessing.emergency_alerts.extract_alerts
+        --input-dir data/emergency_alerts/raw
+        --output-csv data/emergency_alerts/processed/alerts_data.csv
 """
 
 import csv
@@ -65,15 +29,47 @@ import pandas as pd
 from pydantic import BaseModel, Field
 from pydantic import ValidationError as PydanticValidationError
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler("alert_processing.log", mode="a"),
-    ],
+RESET = "\033[0m"
+RED = "\033[91m"
+YELLOW = "\033[93m"
+GREEN = "\033[92m"
+
+
+class ColoredFormatter(logging.Formatter):
+    """Colored log formatter for terminal output."""
+
+    COLORS = {
+        "WARNING": YELLOW,
+        "ERROR": RED,
+        "INFO": GREEN,
+    }
+
+    def format(self, record: logging.LogRecord) -> str:
+        color = self.COLORS.get(record.levelname, RESET)
+        record.levelname = f"{color}{record.levelname}{RESET}"
+        return super().format(record)
+
+
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.INFO)
+
+console_handler = logging.StreamHandler(sys.stdout)
+console_handler.setFormatter(
+    ColoredFormatter("%(asctime)s - %(levelname)s - %(message)s")
 )
+root_logger.addHandler(console_handler)
+
+file_handler = logging.FileHandler(
+    "data/emergency_alerts/processed/alert_processing.log", mode="w"
+)
+file_handler.setFormatter(
+    logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+)
+root_logger.addHandler(file_handler)
+
 log = logging.getLogger(__name__)
+
+os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 
 class AlertSchema(BaseModel):
@@ -85,39 +81,38 @@ class AlertSchema(BaseModel):
     )
     issue_date: str = Field(..., description="Date in YYYY-MM-DD format")
     issue_time: str = Field(..., description="Time of issue in HH:MM format")
-    signer: str = Field(..., description="Name of the signing authority")
     meteorological_event: str = Field(
-        ..., description="Meteorological event description (after 'ANTE:')"
+        default="", description="Meteorological event description (after 'ANTE:')"
     )
-    regions_green_alert: list[str] = Field(
-        default_factory=list, description="Regions under green alert"
+    regions_green_alert: Optional[list[str]] = Field(
+        default=None, description="Regions under green alert"
     )
-    regions_yellow_alert: list[str] = Field(
-        default_factory=list, description="Regions under yellow alert"
+    regions_yellow_alert: Optional[list[str]] = Field(
+        default=None, description="Regions under yellow alert"
     )
-    regions_orange_alert: list[str] = Field(
-        default_factory=list, description="Regions under orange alert"
+    regions_orange_alert: Optional[list[str]] = Field(
+        default=None, description="Regions under orange alert"
     )
-    regions_red_alert: list[str] = Field(
-        default_factory=list, description="Regions under red alert"
+    regions_red_alert: Optional[list[str]] = Field(
+        default=None, description="Regions under red alert"
     )
     summary_of_conditions: str = Field(
-        ..., description="Summary of meteorological conditions"
+        default="", description="Summary of meteorological conditions"
     )
 
 
 # --- Configuration ---
 
-VLLM_BASE_URL: str = "http://localhost:8000/v1"
-VLLM_MODEL: str = "qwen/qwen2.5-1.5b-instruct"
+GOOGLE_API_KEY: Optional[str] = None
+GEMINI_MODEL: str = "gemini-3.1-flash-lite-preview"
 
 PDF_INPUT_DIR: Path = Path("data/emergency_alerts/raw")
 OUTPUT_CSV: Path = Path("data/emergency_alerts/processed/alerts_data.csv")
-FAILED_LOG: Path = Path("data/emergency_alerts/processed/failed_pdfs.txt")
+FAILED_LOG: Path = Path("data/emergency_alerts/processed/failed_pdfs.log")
 
 LLM_SYSTEM_PROMPT: str = """You are an expert data extraction assistant specializing in Costa Rican emergency weather alerts.
 
-CONTEXT: These alerts come from IMN (Instituto Meteorológico Nacional - National Meteorological Institute) or CNE (Comisión Nacional de Emergencias - National Emergency Commission). The documents are in Spanish.
+CONTEXT: These alerts come from CNE (Comisión Nacional de Emergencias - National Emergency Commission). The documents are in Spanish.
 
 KEY SPANISH TERMS YOU WILL SEE:
 - "ANTE:" = "BECAUSE:" or "GIVEN:" - followed by the meteorological event description
@@ -150,7 +145,6 @@ Fields to extract:
 - alert_category: Green, Yellow, Orange, Red, or Cancellation
 - issue_date: Date of issue (YYYY-MM-DD)
 - issue_time: Time of issue (HH:MM)
-- signer: Name of the signing authority
 - meteorological_event: Meteorological event (text after "ANTE:" section)
 - regions_green_alert: List of regions under green alert
 - regions_yellow_alert: List of regions under yellow alert
@@ -179,16 +173,14 @@ def extract_text_from_pdf(pdf_path: Path) -> Optional[str]:
         Extracted text as string, or None if extraction fails.
     """
     try:
-        from docling.document_converter import DocumentConverter
+        from docling.document_converter import DocumentConverter, PdfFormatOption
         from docling.datamodel.base_models import InputFormat
         from docling.datamodel.pipeline_options import PdfPipelineOptions
 
+        pipeline_options = PdfPipelineOptions(do_ocr=True, do_table_structure=False)
         converter = DocumentConverter(
             format_options={
-                InputFormat.PDF: PdfPipelineOptions(
-                    do_ocr=True,
-                    do_table=False,
-                )
+                InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
             }
         )
 
@@ -208,13 +200,13 @@ def extract_text_from_pdf(pdf_path: Path) -> Optional[str]:
 # --- LLM Extraction ---
 
 
-def call_vllm(
+def call_google_ai(
     prompt: str,
     system_prompt: str = LLM_SYSTEM_PROMPT,
     temperature: float = 0.1,
     max_tokens: int = 2048,
 ) -> Optional[str]:
-    """Call vLLM API to extract structured data from text.
+    """Call Google AI Studio API to extract structured data from text.
 
     Args:
         prompt: User prompt with the extracted text.
@@ -226,36 +218,35 @@ def call_vllm(
         LLM response text, or None if the call fails.
     """
     try:
-        from openai import OpenAI
+        from google import genai
 
-        client = OpenAI(
-            base_url=VLLM_BASE_URL,
-            api_key="dummy-key",
+        client = genai.Client(api_key=GOOGLE_API_KEY)
+
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=prompt,
+            config={
+                "system_instruction": system_prompt,
+                "temperature": temperature,
+                "max_output_tokens": max_tokens,
+                "response_mime_type": "application/json",
+            },
         )
 
-        response = client.chat.completions.create(
-            model=VLLM_MODEL,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=temperature,
-            max_tokens=max_tokens,
-            response_format={"type": "json_object"},
-        )
-
-        return response.choices[0].message.content
+        return response.text
 
     except ImportError:
-        log.error("openai package not installed (required for vLLM client)")
+        log.error("google-genai package not installed")
         return None
     except Exception as e:
-        log.error(f"vLLM API call failed: {e}")
+        log.error(f"Google AI API call failed: {e}")
         return None
 
 
-def extract_structured_data(extracted_text: str) -> Optional[AlertSchema]:
-    """Extract structured alert data using LLM.
+def extract_structured_data(
+    extracted_text: str,
+) -> Optional[AlertSchema]:
+    """Extract structured alert data using Google AI.
 
     Args:
         extracted_text: Raw text extracted from PDF.
@@ -265,7 +256,8 @@ def extract_structured_data(extracted_text: str) -> Optional[AlertSchema]:
     """
     prompt = LLM_EXTRACTION_PROMPT.format(extracted_text=extracted_text[:8000])
 
-    response = call_vllm(prompt)
+    response = call_google_ai(prompt)
+
     if not response:
         return None
 
@@ -338,7 +330,7 @@ def log_failed_pdf(pdf_path: Path, reason: str, failed_log: Path) -> None:
     """
     failed_log.parent.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    with open(failed_log, mode="a", encoding="utf-8") as f:
+    with open(failed_log, mode="w", encoding="utf-8") as f:
         f.write(f"{timestamp} | {pdf_path.name} | {reason}\n")
     log.warning(f"Logged failure for {pdf_path.name}: {reason}")
 
@@ -352,10 +344,10 @@ def process_pdfs(
     failed_log: Path,
     year_filter: Optional[str] = None,
 ) -> list[AlertSchema]:
-    """Process all PDFs in a directory.
+    """Process all PDFs in a directory recursively.
 
     Args:
-        input_dir: Directory containing PDF files.
+        input_dir: Directory containing PDF files (searched recursively).
         output_csv: Path to output CSV file.
         failed_log: Path to failed PDFs log.
         year_filter: Optional year subdirectory to filter (e.g., "2024").
@@ -366,7 +358,7 @@ def process_pdfs(
     if year_filter:
         input_dir = input_dir / year_filter
 
-    pdf_files = sorted(input_dir.glob("*.pdf"))
+    pdf_files = sorted(input_dir.rglob("*.pdf"))
 
     if not pdf_files:
         log.warning(f"No PDF files found in {input_dir}")
@@ -418,17 +410,19 @@ def process_pdfs(
 
 
 def main() -> None:
-    """Main entry point for the PDF processing pipeline."""
+    """Main entry point for the PDF processing pipeline using Google AI."""
+    global GOOGLE_API_KEY, GEMINI_MODEL
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Process Costa Rican emergency alert PDFs"
+        description="Extract structured data from Costa Rican emergency alert PDFs using Google AI Studio",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
         "--input-dir",
         type=Path,
         default=PDF_INPUT_DIR,
-        help="Directory containing PDF files",
+        help="Directory containing PDF files (searched recursively)",
     )
     parser.add_argument(
         "--output-csv",
@@ -444,32 +438,36 @@ def main() -> None:
         help="Filter by year subdirectory",
     )
     parser.add_argument(
-        "--vllm-url",
+        "--google-api-key",
         type=str,
-        default=VLLM_BASE_URL,
-        help="vLLM API base URL",
+        default=None,
+        help="Google AI Studio API key",
     )
     parser.add_argument(
-        "--vllm-model",
+        "--gemini-model",
         type=str,
-        default=VLLM_MODEL,
-        help="vLLM model name",
+        default=GEMINI_MODEL,
+        help="Gemini model name",
     )
 
     args = parser.parse_args()
 
-    global VLLM_BASE_URL, VLLM_MODEL
-    VLLM_BASE_URL = args.vllm_url
-    VLLM_MODEL = args.vllm_model
+    if not args.google_api_key:
+        parser.print_help()
+        print("\nError: --google-api-key is required")
+        sys.exit(1)
+
+    GOOGLE_API_KEY = args.google_api_key
+    GEMINI_MODEL = args.gemini_model
 
     log.info("=" * 60)
     log.info("Starting PDF Processing Pipeline")
     log.info(f"Input: {args.input_dir}")
     log.info(f"Output: {args.output_csv}")
-    log.info(f"vLLM: {VLLM_BASE_URL}/{VLLM_MODEL}")
+    log.info(f"Model: Google AI Studio ({GEMINI_MODEL})")
     log.info("=" * 60)
 
-    failed_log = args.output_csv.parent / "failed_pdfs.txt"
+    failed_log = args.output_csv.parent / "failed_pdfs.log"
 
     try:
         alerts = process_pdfs(
