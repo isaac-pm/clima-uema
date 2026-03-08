@@ -32,6 +32,9 @@ pytest -v                       # Verbose output
 pytest -k "pattern"             # Match pattern
 ```
 
+- Write tests for all public functions with descriptive names: `test_<function>_<expected_behavior>`
+- Use pytest fixtures for setup/teardown, test edge cases and error conditions
+
 ### Code Quality
 
 ```bash
@@ -50,20 +53,9 @@ mypy .      # Type check
 - 4 spaces for indentation (no tabs), max line length: 100 characters
 - Use Black for automatic formatting with trailing commas in multi-line structures
 
-### Imports (order: stdlib, third-party, local; alphabetical within groups)
+### Imports
 
-```python
-import csv
-import os
-from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
-
-import requests
-import torch
-from torch import nn
-
-from src.utils import helpers
-```
+Order: stdlib, third-party, local (alphabetical within groups). Example: `csv`, `os`, `datetime` -> `requests`, `torch` -> `from src.utils import helpers`
 
 ### Type Hints
 
@@ -129,17 +121,33 @@ data/
 
 The `preprocessing/emergency_alerts/` module extracts structured data from Costa Rican emergency weather alert PDFs using docling for OCR and Google Gemini LLM for structured extraction. Output goes to CSV format, logs to `data/emergency_alerts/processed/alert_processing.log`.
 
-**Key environment notes:**
-- CUDA is disabled by default (`CUDA_VISIBLE_DEVICES=""`) to avoid library conflicts
-- Uses CPU for docling OCR to prevent CUDA runtime errors
-
-### Testing
-
-- Write tests for all public functions with descriptive names: `test_<function>_<expected_behavior>`
-- Use pytest fixtures for setup/teardown, test edge cases and error conditions
-
 ### Git Practices
 
 - Atomic commits with clear commit messages
 - Don't commit secrets (API keys, passwords)
 - Use `.gitignore`
+
+### Logging
+
+- Use `loguru` for logging (already in requirements.txt)
+- Configure loguru with appropriate levels: DEBUG for development, INFO for production
+- Include contextual information in log messages: `logger.info("Processing file: {}", file_path)`
+
+### CLI Tools
+
+- Use `click` or `argparse` for command-line interfaces
+- Add `--help` support and `-h` short flag
+- Use environment variables for API keys (never hardcode)
+
+### Data Handling
+
+- Use `pandas` for CSV data processing
+- Use `numpy` for numerical operations
+- Follow the raw/processed directory structure in `data/`
+- Handle missing data explicitly with clear error messages
+
+### Environment
+
+- CUDA is disabled by default (`CUDA_VISIBLE_DEVICES=""`) to avoid library conflicts
+- Uses CPU for docling OCR to prevent CUDA runtime errors
+- Set environment variables in `.env` files (not committed to git)
