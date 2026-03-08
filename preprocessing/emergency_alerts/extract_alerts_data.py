@@ -11,7 +11,7 @@ meteorological events, affected regions, and signing authorities. Results are
 saved to CSV format.
 
 Usage:
-    python -m preprocessing.emergency_alerts.extract_alerts
+    python -m preprocessing.emergency_alerts.extract_alerts_data
         --input-dir data/emergency_alerts/raw
         --output-csv data/emergency_alerts/processed/alerts_data.csv
 """
@@ -53,15 +53,18 @@ class ColoredFormatter(logging.Formatter):
 root_logger = logging.getLogger()
 root_logger.setLevel(logging.INFO)
 
+LOG_DIR: Path = Path("logs")
+LOG_FILE: Path = LOG_DIR / "emergency_alerts" / "alert_processing.log"
+
 console_handler = logging.StreamHandler(sys.stdout)
 console_handler.setFormatter(
     ColoredFormatter("%(asctime)s - %(levelname)s - %(message)s")
 )
 root_logger.addHandler(console_handler)
 
-file_handler = logging.FileHandler(
-    "data/emergency_alerts/processed/alert_processing.log", mode="w"
-)
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+file_handler = logging.FileHandler(LOG_FILE, mode="w")
 file_handler.setFormatter(
     logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 )
@@ -108,7 +111,7 @@ GEMINI_MODEL: str = "gemini-3.1-flash-lite-preview"
 
 PDF_INPUT_DIR: Path = Path("data/emergency_alerts/raw")
 OUTPUT_CSV: Path = Path("data/emergency_alerts/processed/alerts_data.csv")
-FAILED_LOG: Path = Path("data/emergency_alerts/processed/failed_pdfs.log")
+FAILED_LOG: Path = LOG_DIR / "emergency_alerts" / "failed_pdfs.log"
 
 LLM_SYSTEM_PROMPT: str = """You are an expert data extraction assistant specializing in Costa Rican emergency weather alerts.
 
@@ -467,7 +470,7 @@ def main() -> None:
     log.info(f"Model: Google AI Studio ({GEMINI_MODEL})")
     log.info("=" * 60)
 
-    failed_log = args.output_csv.parent / "failed_pdfs.log"
+    failed_log = FAILED_LOG
 
     try:
         alerts = process_pdfs(

@@ -1,21 +1,29 @@
 # AGENTS.md - Guidelines for AI Agents
 
-CLIMA-µEMA is a deep learning early warning system (LSTM-Autoencoders) for meteorological anomaly detection using micro-station data from Costa Rica.
+CLIMA-µEMA is a deep learning early warning system (LSTM-Autoencoders) for meteorological anomaly detection using micro-station data from Costa Rica. It also includes a pipeline for extracting structured data from Costa Rican emergency weather alert PDFs.
 
 ## Build, Lint, and Test Commands
 
 ### Dependencies
+
 ```bash
 pip install -r requirements.txt
 pip install pytest black flake8 mypy
 ```
 
 ### Running Scripts
+
 ```bash
+# Download micro-station data
 python data/stations/raw/ucr_uema_data_downloader.py
+
+# Extract emergency alerts from PDFs (requires Google API key)
+python -m preprocessing.emergency_alerts.extract_alerts_data --google-api-key YOUR_KEY
+python -m preprocessing.emergency_alerts.extract_alerts_data -h  # Show all options
 ```
 
 ### Testing
+
 ```bash
 pytest                          # Run all tests
 pytest tests/test_file.py       # Run single test file
@@ -25,6 +33,7 @@ pytest -k "pattern"             # Match pattern
 ```
 
 ### Code Quality
+
 ```bash
 black .     # Format code
 flake8 .    # Lint
@@ -34,11 +43,15 @@ mypy .      # Type check
 ## Code Style Guidelines
 
 ### General
+
 - Follow PEP 8 style guidelines
 - Use type hints for all function signatures
 - Add Google-style docstrings to public functions and classes
+- 4 spaces for indentation (no tabs), max line length: 100 characters
+- Use Black for automatic formatting with trailing commas in multi-line structures
 
 ### Imports (order: stdlib, third-party, local; alphabetical within groups)
+
 ```python
 import csv
 import os
@@ -52,13 +65,8 @@ from torch import nn
 from src.utils import helpers
 ```
 
-### Formatting
-- 4 spaces for indentation (no tabs)
-- Maximum line length: 100 characters
-- Use Black for automatic formatting
-- Trailing commas in multi-line structures
-
 ### Type Hints
+
 - Use `Optional[X]` instead of `X | None` for Python < 3.10 compatibility
 - Use `dict[str, Any]` for dictionaries with mixed value types
 
@@ -71,31 +79,15 @@ def train_model(
 ```
 
 ### Naming Conventions
+
 - `snake_case` for functions, variables, modules
 - `PascalCase` for classes
 - `UPPERCASE` for constants
 - Descriptive names, avoid single-letter variables (except loops)
 
-### Docstrings
-```python
-def function_name(param1: str, param2: int) -> bool:
-    """Short description of what the function does.
-
-    Args:
-        param1: Description of param1.
-        param2: Description of param2.
-
-    Returns:
-        Description of what the function returns.
-
-    Raises:
-        ValueError: Description of when this error is raised.
-    """
-```
-
 ### Error Handling
-- Use specific exception types
-- Include informative error messages
+
+- Use specific exception types with informative error messages
 - Handle exceptions at the appropriate level
 
 ```python
@@ -106,48 +98,48 @@ except requests.exceptions.RequestException as e:
     log(f"HTTP Error: {e}")
 ```
 
-### Constants
-- Group related constants at module level
-- Use uppercase with underscores
-- Comment non-obvious constants
+### Constants & File Organization
+
+- Group related constants at module level with uppercase and underscores
+- Keep related functionality together, separate concerns
+- Main execution code behind `if __name__ == "__main__":` guard
 
 ```python
 CR_TZ = timezone(timedelta(hours=-6))  # Costa Rica UTC-6
-
 FEATURE_COLS = ["temperature", "humidity", "pressure"]
 ```
 
-### File Organization
-- Keep related functionality together
-- Separate concerns (data, models, training, evaluation, utils)
-- Main execution code behind `if __name__ == "__main__":` guard
-
 ### Project Structure
+
 ```
 src/
   evaluation/    # Model evaluation metrics
   models/        # Neural network architectures
   training/      # Training loops and logic
   utils/         # Helper functions
+preprocessing/
+  emergency_alerts/   # Emergency alert PDF extraction pipeline
 tests/           # Test files
 data/
-  emergency_alerts/  # Alert PDFs
-  stations/          # Weather station CSV data
+  emergency_alerts/  # Alert PDFs (raw/, processed/)
+  stations/          # Weather station CSV data (raw/, processed/)
 ```
 
-### Testing
-- Write tests for all public functions
-- Use descriptive names: `test_<function>_<expected_behavior>`
-- Use pytest fixtures for setup/teardown
-- Test edge cases and error conditions
+### Preprocessing Module
 
-### Data Files
-- Raw data: `data/raw/`
-- Processed data: `data/processed/`
-- Descriptive file names with prefixes
+The `preprocessing/emergency_alerts/` module extracts structured data from Costa Rican emergency weather alert PDFs using docling for OCR and Google Gemini LLM for structured extraction. Output goes to CSV format, logs to `data/emergency_alerts/processed/alert_processing.log`.
+
+**Key environment notes:**
+- CUDA is disabled by default (`CUDA_VISIBLE_DEVICES=""`) to avoid library conflicts
+- Uses CPU for docling OCR to prevent CUDA runtime errors
+
+### Testing
+
+- Write tests for all public functions with descriptive names: `test_<function>_<expected_behavior>`
+- Use pytest fixtures for setup/teardown, test edge cases and error conditions
 
 ### Git Practices
-- Atomic commits
-- Clear commit messages
+
+- Atomic commits with clear commit messages
 - Don't commit secrets (API keys, passwords)
 - Use `.gitignore`
