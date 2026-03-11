@@ -1,60 +1,35 @@
-"""Build a global Gold dataset from all Silver station CSV files.
-
-Unlike the per-station Gold pipeline, this script fits one global scaler set
-from normal rows across all stations, then creates one shared train/test split.
-"""
+"""Build a global Gold dataset from all Silver station CSV files."""
 
 from __future__ import annotations
 
 import argparse
 import logging
 from pathlib import Path
-from typing import Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
-try:
-    from preprocessing.stations.extract_stations_data_gold_layer import (
-        FEATURES,
-        apply_scalers,
-        create_anomalous_mask,
-        find_silver_files,
-        read_station_csv,
-        sliding_windows,
-        split_and_sample,
-    )
-except ModuleNotFoundError:
-    from extract_stations_data_gold_layer import (
-        FEATURES,
-        apply_scalers,
-        create_anomalous_mask,
-        find_silver_files,
-        read_station_csv,
-        sliding_windows,
-        split_and_sample,
-    )
+from preprocessing.stations.config import PROCESSED_GOLD_DIR, PROCESSED_SILVER_DIR
+from preprocessing.stations.gold_pipeline import (
+    build_global_windows,
+    create_anomalous_mask,
+    find_silver_files,
+    fit_global_scalers,
+    read_station_csv,
+    split_and_sample,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 
 def load_station_data_with_masks(
-    silver_files: List[Path],
+    silver_files: list[Path],
     buffer_hours: int,
-) -> Tuple[Dict[str, pd.DataFrame], Dict[str, pd.Series]]:
-    """Load all station data and build anomalous masks.
-
-    Args:
-        silver_files: Station CSV file paths.
-        buffer_hours: Hours to buffer before and after active alerts.
-
-    Returns:
-        Tuple with station DataFrames and anomalous masks keyed by station name.
-    """
-    station_dfs: Dict[str, pd.DataFrame] = {}
-    station_masks: Dict[str, pd.Series] = {}
+) -> tuple[dict[str, pd.DataFrame], dict[str, pd.Series]]:
+    """Load all station data and build anomalous masks."""
+    station_dfs: dict[str, pd.DataFrame] = {}
+    station_masks: dict[str, pd.Series] = {}
 
     for csv_path in silver_files:
         station_name = csv_path.stem
@@ -67,111 +42,6 @@ def load_station_data_with_masks(
     return station_dfs, station_masks
 
 
-def fit_global_scalers(
-    station_dfs: Dict[str, pd.DataFrame],
-    station_masks: Dict[str, pd.Series],
-) -> Dict[str, object]:
-    """Fit one scaler set on normal rows from all stations.
-
-    Args:
-        station_dfs: Station DataFrames keyed by station name.
-        station_masks: Anomalous masks keyed by station name.
-
-    Returns:
-        Scaler dictionary compatible with `apply_scalers`.
-    """
-    scalers: Dict[str, object] = {}
-
-    pressure_chunks: List[pd.DataFrame] = []
-    mm_chunks: List[pd.DataFrame] = []
-    mm_cols = ["precipitation_mm", "luminous_intensity_lux"]
-
-    for station_name, df in station_dfs.items():
-        normal_df = df.loc[~station_masks[station_name]]
-
-        if "pressure_hPa" in normal_df.columns:
-            pressure_chunks.append(normal_df[["pressure_hPa"]].astype(float).dropna())
-
-        available_mm = [c for c in mm_cols if c in normal_df.columns]
-        if available_mm:
-            mm_chunk = normal_df[available_mm].astype(float)
-            mm_chunk = mm_chunk.reindex(columns=available_mm).dropna()
-            if not mm_chunk.empty:
-                mm_chunks.append(mm_chunk)
-
-    if pressure_chunks:
-        pressure_data = pd.concat(pressure_chunks, axis=0, ignore_index=True)
-        pressure_scaler = StandardScaler()
-        pressure_scaler.fit(pressure_data)
-        scalers["pressure"] = pressure_scaler
-        logger.info("Fitted global pressure scaler on %d rows", len(pressure_data))
-
-    global_mm_cols = [
-        c for c in mm_cols if any(c in df.columns for df in station_dfs.values())
-    ]
-    if mm_chunks and global_mm_cols:
-        aligned_mm_chunks = [
-            chunk.reindex(columns=global_mm_cols) for chunk in mm_chunks
-        ]
-        mm_data = pd.concat(aligned_mm_chunks, axis=0, ignore_index=True).dropna()
-        if not mm_data.empty:
-            mm_scaler = MinMaxScaler()
-            mm_scaler.fit(mm_data)
-            scalers["minmax"] = (mm_scaler, global_mm_cols)
-            logger.info("Fitted global minmax scaler on %d rows", len(mm_data))
-
-    scalers["cyclical"] = [c for c in FEATURES if c.endswith(("_sin", "_cos"))]
-
-    return scalers
-
-
-def build_global_windows(
-    station_dfs: Dict[str, pd.DataFrame],
-    station_masks: Dict[str, pd.Series],
-    scalers: Dict[str, object],
-    window_size: int,
-    stride: int,
-) -> Tuple[List[np.ndarray], List[np.ndarray]]:
-    """Scale each station and aggregate all normal/anomalous windows.
-
-    Args:
-        station_dfs: Station DataFrames keyed by station name.
-        station_masks: Anomalous masks keyed by station name.
-        scalers: Global scaler dictionary.
-        window_size: Timesteps per window.
-        stride: Window stride.
-
-    Returns:
-        Tuple of aggregated normal and anomalous window lists.
-    """
-    all_normal_windows: List[np.ndarray] = []
-    all_anomalous_windows: List[np.ndarray] = []
-
-    for station_name, df in station_dfs.items():
-        scaled_df = apply_scalers(df, scalers)
-        arr = scaled_df.values
-        mask_arr = station_masks[station_name].values.astype(bool)
-
-        normal_wins, anomalous_wins = sliding_windows(
-            arr,
-            mask_arr,
-            window_size=window_size,
-            stride=stride,
-        )
-
-        all_normal_windows.extend(normal_wins)
-        all_anomalous_windows.extend(anomalous_wins)
-
-        logger.info(
-            "Station %s -> normal windows: %d | anomalous windows: %d",
-            station_name,
-            len(normal_wins),
-            len(anomalous_wins),
-        )
-
-    return all_normal_windows, all_anomalous_windows
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Build global Gold dataset from all Silver station CSVs",
@@ -179,13 +49,13 @@ def main() -> None:
     parser.add_argument(
         "--silver-dir",
         type=Path,
-        default=Path("data/stations/processed/silver"),
+        default=PROCESSED_SILVER_DIR,
         help="Directory with Silver CSV station files",
     )
     parser.add_argument(
         "--gold-dir",
         type=Path,
-        default=Path("data/stations/processed/gold"),
+        default=PROCESSED_GOLD_DIR,
         help="Output directory for global Gold NumPy arrays",
     )
     parser.add_argument("--window-size", type=int, default=144)
@@ -233,13 +103,9 @@ def main() -> None:
     )
 
     args.gold_dir.mkdir(parents=True, exist_ok=True)
-    xtrain_path = args.gold_dir / "global_X_train.npy"
-    xtest_path = args.gold_dir / "global_X_test.npy"
-    ytest_path = args.gold_dir / "global_y_test.npy"
-
-    np.save(xtrain_path, global_x_train)
-    np.save(xtest_path, global_x_test)
-    np.save(ytest_path, global_y_test)
+    np.save(args.gold_dir / "global_X_train.npy", global_x_train)
+    np.save(args.gold_dir / "global_X_test.npy", global_x_test)
+    np.save(args.gold_dir / "global_y_test.npy", global_y_test)
 
     logger.info("Saved global_X_train shape: %s", global_x_train.shape)
     logger.info("Saved global_X_test shape: %s", global_x_test.shape)
