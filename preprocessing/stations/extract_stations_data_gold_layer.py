@@ -51,7 +51,7 @@ def read_station_csv(path: Path) -> pd.DataFrame:
     Returns:
         DataFrame indexed by datetime.
     """
-    df = pd.read_csv(path, parse_dates=["time"])
+    df = pd.read_csv(path, parse_dates=["time"], low_memory=False)
     df.set_index("time", inplace=True)
     return df
 
