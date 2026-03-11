@@ -24,16 +24,15 @@ import csv
 import json
 import os
 import threading
+import tkinter as tk
 from datetime import datetime, timedelta, timezone
+from tkinter import messagebox, ttk
+from tkinter.scrolledtext import ScrolledText
 from typing import Any, Callable, Optional
 
 import requests
-import tkinter as tk
-from tkinter import ttk, messagebox
-from tkinter.scrolledtext import ScrolledText
 
-
-# --- Core Configuration ---
+# Core configuration.
 
 CR_TZ = timezone(timedelta(hours=-6))
 
@@ -112,7 +111,7 @@ ALL_STATIONS = {
 }
 
 
-# --- Download Logic ---
+# Download logic.
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -269,7 +268,9 @@ def fetch_and_save_data(
                     end_epoch = int(current_end.timestamp() * 1000)
 
                     log(
-                        f"  Fetching: {current_start.strftime('%Y-%m-%d')} to {current_end.strftime('%Y-%m-%d')}..."
+                        "  Fetching: "
+                        f"{current_start.strftime('%Y-%m-%d')} to "
+                        f"{current_end.strftime('%Y-%m-%d')}..."
                     )
 
                     payload = build_flux_payload(
@@ -327,7 +328,7 @@ def fetch_and_save_data(
     log("\n=== ALL DOWNLOADS COMPLETE ===")
 
 
-# --- UI Application ---
+# UI application.
 class DownloaderApp:
     """GUI application for UCR-µEMA data downloading.
 
@@ -346,7 +347,7 @@ class DownloaderApp:
         self.root.geometry("650x750")
         self.root.configure(padx=20, pady=20)
 
-        # Server & Credentials
+        # Server and credentials.
         settings_frame = ttk.LabelFrame(root, text="Server & Credentials", padding=10)
         settings_frame.pack(fill="x", pady=5)
 
@@ -376,7 +377,7 @@ class DownloaderApp:
         self.pass_entry = ttk.Entry(settings_frame, show="*", width=35)
         self.pass_entry.grid(row=3, column=1, sticky="w", padx=5, pady=2)
 
-        # Dates
+        # Date range.
         date_frame = ttk.LabelFrame(root, text="Date Range (YYYY-MM-DD)", padding=10)
         date_frame.pack(fill="x", pady=5)
 
@@ -394,7 +395,7 @@ class DownloaderApp:
         self.end_entry.insert(0, "2026-03-01")
         self.end_entry.grid(row=0, column=3, sticky="w", padx=5)
 
-        # Features
+        # Feature selection.
         feat_frame = ttk.LabelFrame(root, text="Features", padding=10)
         feat_frame.pack(fill="x", pady=5)
         self.feature_vars = {}
@@ -405,11 +406,11 @@ class DownloaderApp:
                 feat_frame, text=feat.replace("_", " ").title(), variable=var
             ).grid(row=0, column=idx, padx=10, sticky="w")
 
-        # Stations
+        # Station selection.
         stat_frame = ttk.LabelFrame(root, text="Stations (Select multiple)", padding=10)
         stat_frame.pack(fill="x", pady=5)
 
-        # Use a scrollable frame of checkbuttons so selections are visually explicit
+        # Scrollable station list.
         self.station_canvas = tk.Canvas(stat_frame, height=160)
         self.station_scroll = ttk.Scrollbar(
             stat_frame, orient="vertical", command=self.station_canvas.yview
@@ -439,7 +440,7 @@ class DownloaderApp:
                 variable=var,
             ).pack(anchor="w", padx=5, pady=2)
 
-        # Select/Clear buttons for convenience
+        # Bulk station actions.
         sel_btn_frame = ttk.Frame(stat_frame)
         sel_btn_frame.pack(fill="x", pady=(5, 0))
         ttk.Button(
@@ -449,7 +450,7 @@ class DownloaderApp:
             sel_btn_frame, text="Clear All", command=lambda: self.clear_all_stations()
         ).pack(side="left", padx=5)
 
-        # Run / Stop Buttons
+        # Run and stop buttons.
         btn_frame = ttk.Frame(root)
         btn_frame.pack(pady=10)
 
@@ -462,14 +463,14 @@ class DownloaderApp:
         self.stop_btn.pack(side="left", padx=5)
         self.stop_btn.config(state="disabled")
 
-        # Log Output
+        # Log output.
         log_frame = ttk.LabelFrame(root, text="Progress Log", padding=10)
         log_frame.pack(fill="both", expand=True, pady=5)
         self.log_text = ScrolledText(log_frame, state="disabled", height=10)
         self.log_text.pack(fill="both", expand=True)
 
     def write_log(self, msg: str) -> None:
-        """Thread-safe logging via tkinter main loop.
+        """Write log text on the Tkinter main loop.
 
         Args:
             msg: The message to log.
@@ -488,7 +489,7 @@ class DownloaderApp:
         self.log_text.configure(state="disabled")
 
     def start_download(self) -> None:
-        """Validate inputs and initiate the data download process."""
+        """Validate inputs and start data download."""
         try:
             start_date = datetime.strptime(self.start_entry.get(), "%Y-%m-%d").replace(
                 tzinfo=CR_TZ

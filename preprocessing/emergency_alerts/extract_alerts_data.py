@@ -1,19 +1,9 @@
-"""
-Emergency alert PDF extraction module.
+"""Extract structured emergency-alert data from Costa Rican weather PDFs.
 
-This module extracts structured data from Costa Rican emergency weather alert PDFs
-using a two-stage pipeline:
-1. PDF text extraction via docling
-2. Structured data extraction via Google Gemini LLM
-
-The extracted alerts include alert level (Green/Yellow/Orange/Red/Cancellation),
-meteorological events, affected regions, and signing authorities. Results are
-saved to CSV format.
-
-Usage:
-    python -m preprocessing.emergency_alerts.extract_alerts_data
-        --input-dir data/emergency_alerts/raw
-        --output-csv data/emergency_alerts/processed/alerts_data.csv
+Pipeline:
+1. Extract PDF text with docling.
+2. Extract structured fields with Google Gemini.
+3. Validate with Pydantic and append to CSV.
 """
 
 import csv
@@ -176,9 +166,9 @@ def extract_text_from_pdf(pdf_path: Path) -> Optional[str]:
         Extracted text as string, or None if extraction fails.
     """
     try:
-        from docling.document_converter import DocumentConverter, PdfFormatOption
         from docling.datamodel.base_models import InputFormat
         from docling.datamodel.pipeline_options import PdfPipelineOptions
+        from docling.document_converter import DocumentConverter, PdfFormatOption
 
         pipeline_options = PdfPipelineOptions(do_ocr=True, do_table_structure=False)
         converter = DocumentConverter(
@@ -418,7 +408,7 @@ def main() -> None:
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Extract structured data from Costa Rican emergency alert PDFs using Google AI Studio",
+        description="Extract structured data from Costa Rican emergency alert PDFs",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(

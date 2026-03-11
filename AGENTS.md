@@ -129,9 +129,15 @@ The `preprocessing/emergency_alerts/` module extracts structured data from Costa
 
 ### Logging
 
-- Use `loguru` for logging (already in requirements.txt)
+- Use `loguru` for logging (already in requirements.txt) or standard `logging` module
 - Configure loguru with appropriate levels: DEBUG for development, INFO for production
 - Include contextual information in log messages: `logger.info("Processing file: {}", file_path)`
+
+### Data Validation
+
+- Use `pydantic` for data validation and schema definition (already in requirements.txt)
+- Define models with descriptive field descriptions using `Field(description="...")`
+- Handle `PydanticValidationError` explicitly
 
 ### CLI Tools
 
@@ -143,6 +149,7 @@ The `preprocessing/emergency_alerts/` module extracts structured data from Costa
 
 - Use `pandas` for CSV data processing
 - Use `numpy` for numerical operations
+- Use `pathlib.Path` for file path operations (not os.path)
 - Follow the raw/processed directory structure in `data/`
 - Handle missing data explicitly with clear error messages
 

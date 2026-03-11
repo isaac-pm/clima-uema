@@ -1,46 +1,20 @@
-"""
-Station Data Extraction and Processing Pipeline
+"""Build Silver-layer station datasets from raw UEMA sensor CSV files.
 
-This module processes raw micro-meteorological station data from the UEMA network
-in Costa Rica into consolidated, analysis-ready time-series datasets.
+Pipeline steps:
+1. Merge pressure, precipitation, and luminous-intensity streams per station.
+2. Resample to a strict 10-minute timeline.
+3. Align shared time range and fill gaps.
+4. Add cyclical time features.
+5. Join emergency-alert features.
 
-Data Processing Strategy:
-=========================
-
-1. CONSOLIDATION: Raw sensor data is split by measurement type (pressure,
-   precipitation, luminous intensity). This step merges them into unified
-   datasets per station using the datetime index.
-
-2. TEMPORAL ALIGNMENT: The combined data is resampled to a strict 10-minute
-   frequency. This ensures any gaps in hardware logging appear as explicit
-   NaN rows rather than invisible gaps.
-
-3. MISSING DATA HANDLING:
-   - Timeline alignment: Uses inner join to find the overlapping period
-     where ALL three sensors have data (avoids training on fabricated data)
-   - Pressure gaps: Linear interpolation for smooth continuity
-   - Precipitation/Luminous: Forward-fill + zero-fill (0 is appropriate when
-     sensor is offline at night or malfunctioning)
-
-4. FEATURE ENGINEERING: Adds cyclical encodings for time features:
-   - Hour of day (sin/cos) - prevents 23:00 appearing far from 00:00
-   - Day of year (sin/cos) - captures seasonal patterns
-
-5. ALERT INTEGRATION: Merges meteorological emergency alerts from IMN/CNE:
-   - Region matching: Maps station locations to affected regions in alerts
-   - Severity hierarchy: Red > Orange > Yellow > Green
-   - Temporal propagation: Uses merge_asof to propagate alert state forward
-   - Expiration: Alerts auto-expire after 3 days (no formal cancellation)
-
-Output: Silver-layer CSV files in data/stations/processed/silver/
+Output files are written to ``data/stations/processed/silver/``.
 """
 
 import os
 from glob import glob
 
-import pandas as pd
 import numpy as np
-
+import pandas as pd
 
 # =============================================================================
 # DATA DIRECTORIES
@@ -78,10 +52,8 @@ STATION_NAMES: list[str] = [
 # =============================================================================
 # REGION MAPPING FOR ALERT MATCHING
 # =============================================================================
-# Maps each station to the list of region names that may appear in alert
-# data. Used to determine if a weather alert applies to a station's location.
-# The order matters: more specific regions should be listed first for
-# accurate matching (e.g., "Caribe Norte" before "Caribe").
+# Station-to-region mapping used for alert matching.
+# Keep specific regions before broad ones (e.g., "Caribe Norte" before "Caribe").
 
 STATION_REGIONS: dict[str, list[str]] = {
     "sede-central_finca-1": ["Valle Central", "Región Central", "Central"],
@@ -101,8 +73,7 @@ STATION_REGIONS: dict[str, list[str]] = {
     "recinto-santa-cruz": ["Pacífico Norte"],
 }
 
-# Region names that indicate nation-wide alerts affecting all stations.
-# These are matched as fallback when no specific region matches.
+# Region labels that apply to all stations as fallback matches.
 GENERAL_REGIONS = [
     "Todo el país",
     "Resto del país",
@@ -114,13 +85,8 @@ GENERAL_REGIONS = [
 # =============================================================================
 # SENSOR-SPECIFIC CONFIGURATION
 # =============================================================================
-# Some sensors have known issues (malfunctions, calibration drift) that
-# require truncating data before a certain date. This dict specifies
-# those cutoffs per station and sensor.
-#
-# Keys: station names
-# Values: dicts mapping sensor column names to cutoff timestamps
-# Data before the cutoff is discarded for that sensor.
+# Per-station sensor cutoffs for known bad periods.
+# Data earlier than each cutoff timestamp is discarded.
 
 SENSOR_CUTOFFS = {
     "sede-central_finca-2": {
@@ -232,15 +198,9 @@ def resample_to_10min(df: pd.DataFrame) -> pd.DataFrame:
 def handle_missing_data(df: pd.DataFrame) -> pd.DataFrame:
     """Trim to overlapping timeline and fill intermittent gaps.
 
-    This is Step 2 of the pipeline - handling mismatched timelines:
-
-    1. Inner Join: Finds the strict overlapping period where ALL three
-       sensors have data. This avoids training the model on fabricated
-       data from periods where some sensors weren't active yet.
-
-    2. Gap Filling:
-       - Pressure: Linear interpolation (continuous variable)
-       - Precipitation/Luminous: Forward-fill + zero-fill (sparse/count data)
+    Keeps only the overlap where all sensors exist, then fills gaps:
+    - pressure_hPa: linear interpolation
+    - precipitation_mm and luminous_intensity_lux: fill with zeros
 
     Args:
         df: DataFrame with sensor columns and datetime index.
@@ -248,18 +208,14 @@ def handle_missing_data(df: pd.DataFrame) -> pd.DataFrame:
     Returns:
         DataFrame trimmed to overlapping period with gaps filled.
     """
-    # 1. Find the strict overlapping timeframe (Inner Join of timelines)
+    # Find strict overlap where all sensors have data.
     start_time = df.apply(lambda col: col.first_valid_index()).max()
     end_time = df.apply(lambda col: col.last_valid_index()).min()
 
-    # 2. Slice the dataframe to this bounding box
+    # Slice to overlap window.
     df = df.loc[start_time:end_time].copy()
 
-    # # 3. Drop rows where ANY sensor is missing (true inner join)
-    # # This ensures we only keep timestamps where ALL sensors have data
-    # df = df.dropna()
-
-    # 4. Fill intermittent gaps within the valid timeframe
+    # Fill intermittent gaps within the valid window.
     df["pressure_hPa"] = df["pressure_hPa"].interpolate(method="linear")
 
     df["precipitation_mm"] = df["precipitation_mm"].fillna(0)
@@ -271,11 +227,7 @@ def handle_missing_data(df: pd.DataFrame) -> pd.DataFrame:
 def add_cyclical_time_features(df: pd.DataFrame) -> pd.DataFrame:
     """Add cyclical sine/cosine features for hour and day of year.
 
-    This is Step 3 of the pipeline - Feature Engineering.
-
-    Weather patterns follow daily and seasonal cycles. Using raw hour (0-23)
-    or day (1-365) values would make the model think 23:00 is far from 00:00
-    when they're actually adjacent. Cyclical encoding preserves continuity.
+    Encodes hour/day cyclicality to preserve temporal continuity.
 
     Args:
         df: DataFrame with datetime index.
@@ -289,7 +241,7 @@ def add_cyclical_time_features(df: pd.DataFrame) -> pd.DataFrame:
 
     datetime_index = pd.DatetimeIndex(df.index)
 
-    # Minute-level precision for hour features
+    # Minute-level hour fraction.
     hour = datetime_index.hour
     minute = datetime_index.minute
     total_minutes = hour * 60 + minute
@@ -376,7 +328,7 @@ def add_alert_features(df: pd.DataFrame, station_name: str) -> pd.DataFrame:
     station_regions = STATION_REGIONS.get(station_name, [])
 
     def check_region_match(alert_row: pd.Series) -> tuple[bool, str | None, str | None]:
-        """Check if alert matches station regions and return (is_active, severity, alert_id)."""
+        """Return alert status tuple for a station/alert pair."""
         category = str(alert_row["alert_category"]).strip()
 
         if category == "Cancellation":
@@ -440,7 +392,7 @@ def add_alert_features(df: pd.DataFrame, station_name: str) -> pd.DataFrame:
         df["alert_id"] = None
         return df
 
-    # Save the alert datetime as a column before setting it as index for merge_asof
+    # Keep matched alert time for expiration logic.
     events_df["matched_alert_time"] = events_df["alert_datetime"]
     events_df = events_df.set_index("alert_datetime")
 
@@ -460,18 +412,17 @@ def add_alert_features(df: pd.DataFrame, station_name: str) -> pd.DataFrame:
     )
 
     if "matched_alert_time" in merged_df.columns:
-        # Calculate elapsed time since the assimilated alert was issued
+        # Time elapsed since matched alert was issued.
         elapsed = merged_df["timestamp"] - merged_df["matched_alert_time"]
 
-        # Create a boolean mask for rows where elapsed time exceeds 3 days
+        # Expire alerts after 3 days.
         expired_mask = elapsed > pd.Timedelta(days=3)
 
-        # Turn off alerts that have expired
         merged_df.loc[expired_mask, "is_active_alert"] = False
         merged_df.loc[expired_mask, "alert_severity"] = None
         merged_df.loc[expired_mask, "alert_id"] = None
 
-        # Clean up the temporary matched_alert_time column as it's no longer needed
+        # Drop temporary helper column.
         merged_df = merged_df.drop(columns=["matched_alert_time"])
 
     merged_df = merged_df.rename(columns={"timestamp": "time"})
@@ -483,18 +434,11 @@ def add_alert_features(df: pd.DataFrame, station_name: str) -> pd.DataFrame:
 def process_station(station_name: str) -> pd.DataFrame:
     """Process a single station through all transformation steps.
 
-    Pipeline order:
-    1. consolidate_station_data - Load and merge raw sensor data
-    2. resample_to_10min - Enforce regular time grid
-    3. handle_missing_data - Inner join timeline + fill gaps
-    4. add_cyclical_time_features - Encode temporal patterns
-    5. add_alert_features - Merge emergency alerts
-
     Args:
         station_name: Station identifier.
 
     Returns:
-        Fully processed DataFrame ready for analysis/modeling.
+        Processed DataFrame ready for downstream modeling.
     """
     df = consolidate_station_data(station_name)
     df = resample_to_10min(df)
