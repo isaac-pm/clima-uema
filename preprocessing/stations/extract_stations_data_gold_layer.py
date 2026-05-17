@@ -16,7 +16,8 @@ from preprocessing.stations.gold_pipeline import (
     fit_strict_scalers,
     read_station_csv,
     sliding_windows,
-    split_and_sample,
+    split_df_temporally,
+    split_windows_temporally,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
@@ -29,32 +30,39 @@ def process_station(
     window_size: int = 144,
     stride: int = 6,
     buffer_hours: int = 72,
-    normal_sample_in_test: float = 0.2,
-    random_state: int = 42,
+    train_ratio: float = 0.8,
 ) -> None:
-    """Process single station CSV and save gold-layer NumPy arrays."""
+    """Process single station CSV and save gold-layer NumPy arrays.
+
+    Uses temporal split: earlier data for training, later for testing.
+    Scalers are fit exclusively on training portion's normal data.
+    """
     station_name = csv_path.stem
     logger.info("Processing station: %s", station_name)
 
     df = read_station_csv(csv_path)
+    train_df, test_df = split_df_temporally(df, train_ratio=train_ratio)
+
     anomalous_mask = create_anomalous_mask(df, buffer_hours=buffer_hours)
-    scalers = fit_strict_scalers(df, anomalous_mask)
+    train_anomalous_mask = create_anomalous_mask(train_df, buffer_hours=buffer_hours)
+
+    scalers = fit_strict_scalers(train_df, train_anomalous_mask)
     scaled = apply_scalers(df, scalers)
 
     arr = scaled.values
     mask_arr = anomalous_mask.values.astype(bool)
-    normal_wins, anomalous_wins = sliding_windows(
+    normal_wins, anomalous_wins, all_indices = sliding_windows(
         arr,
         mask_arr,
         window_size=window_size,
         stride=stride,
     )
 
-    x_train, x_test, y_test = split_and_sample(
+    x_train, x_test, y_test = split_windows_temporally(
         normal_wins,
         anomalous_wins,
-        normal_sample_in_test,
-        random_state,
+        all_indices,
+        train_ratio=train_ratio,
     )
 
     gold_dir.mkdir(parents=True, exist_ok=True)
@@ -84,8 +92,12 @@ def main() -> None:
     parser.add_argument("--window-size", type=int, default=144)
     parser.add_argument("--stride", type=int, default=6)
     parser.add_argument("--buffer-hours", type=int, default=72)
-    parser.add_argument("--normal-sample-in-test", type=float, default=0.2)
-    parser.add_argument("--random-state", type=int, default=42)
+    parser.add_argument(
+        "--train-ratio",
+        type=float,
+        default=0.8,
+        help="Fraction of data (earliest) to use for training (default: 0.8)",
+    )
 
     args = parser.parse_args()
 
@@ -102,8 +114,7 @@ def main() -> None:
                 window_size=args.window_size,
                 stride=args.stride,
                 buffer_hours=args.buffer_hours,
-                normal_sample_in_test=args.normal_sample_in_test,
-                random_state=args.random_state,
+                train_ratio=args.train_ratio,
             )
         except Exception as exc:
             logger.exception("Failed processing %s: %s", file_path, exc)

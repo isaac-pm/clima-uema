@@ -2,7 +2,8 @@
 
 This module supports:
 - reading ``.npy`` sequence arrays with optional memory mapping,
-- on-the-fly Gaussian jitter augmentation,
+- physics-aware data augmentation (Gaussian noise, temporal masking) for continuous features,
+- preserving cyclical features,
 - batching via ``DataLoader``,
 - optional device transfer through a lightweight wrapper.
 """
@@ -29,6 +30,10 @@ class NpySequenceDataset(Dataset[Union[Tensor, Tuple[Tensor, Tensor]]]):
         npy_path: Union[str, Path],
         apply_augmentation: bool = False,
         jitter_scale: float = 0.01,
+        dropout_prob: float = 0.1,
+        dropout_length: Tuple[int, int] = (2, 4),
+        continuous_cols: Sequence[int] = (0, 1, 2),
+        cyclical_cols: Sequence[int] = (3, 4, 5, 6),
         mmap_mode: Optional[str] = None,
         return_target: bool = True,
         chunk_size: int = 2048,
@@ -37,15 +42,23 @@ class NpySequenceDataset(Dataset[Union[Tensor, Tuple[Tensor, Tensor]]]):
 
         Args:
             npy_path: Path to ``X_train.npy`` (or compatible 3D array).
-            apply_augmentation: If True, applies Gaussian jitter in ``__getitem__``.
+            apply_augmentation: If True, applies physics-aware augmentations in ``__getitem__``.
             jitter_scale: Multiplicative factor for per-feature std to set noise sigma.
+            dropout_prob: Probability of applying temporal masking dropout per sequence.
+            dropout_length: Range of consecutive timesteps to mask out.
+            continuous_cols: Indices of continuous features (e.g. Pressure, Precipitation, Luminous Intensity).
+            cyclical_cols: Indices of cyclical features (e.g. sine/cosine of hour/day).
             mmap_mode: NumPy mmap mode (for example ``"r"``) or None.
-            return_target: If True, returns ``(x, x)`` for autoencoder training.
+            return_target: If True, returns ``(noisy_x, pristine_x)`` for autoencoder training.
             chunk_size: Number of samples per chunk for std computation.
         """
         self.npy_path = Path(npy_path)
         self.apply_augmentation = apply_augmentation
         self.jitter_scale = float(jitter_scale)
+        self.dropout_prob = float(dropout_prob)
+        self.dropout_length = dropout_length
+        self.continuous_cols = list(continuous_cols)
+        self.cyclical_cols = list(cyclical_cols)
         self.return_target = return_target
 
         self.data = np.load(self.npy_path, mmap_mode=mmap_mode)
@@ -89,13 +102,31 @@ class NpySequenceDataset(Dataset[Union[Tensor, Tuple[Tensor, Tensor]]]):
     def __getitem__(self, index: int) -> Union[Tensor, Tuple[Tensor, Tensor]]:
         sequence_np = np.asarray(self.data[index], dtype=np.float32)
         sequence = torch.from_numpy(sequence_np.copy())
+        target = sequence.clone()
 
         if self.apply_augmentation:
+            # 1. Gaussian Noise Injection (only on continuous features)
             noise = torch.randn_like(sequence) * self.noise_sigma.view(1, -1)
-            sequence = sequence + noise
+            for col in self.continuous_cols:
+                sequence[:, col] += noise[:, col]
+
+            # 2. Temporal Masking (Dropout)
+            if torch.rand(1).item() < self.dropout_prob:
+                drop_len = torch.randint(
+                    self.dropout_length[0], self.dropout_length[1] + 1, (1,)
+                ).item()
+                start_idx = torch.randint(
+                    0, self.window_size - drop_len + 1, (1,)
+                ).item()
+                # Zero out only the continuous timesteps block
+                for col in self.continuous_cols:
+                    sequence[start_idx : start_idx + drop_len, col] = 0.0
+
+            # 3. Cyclical Feature Preservation:
+            # They are inherently preserved because we only applied noise/dropout to continuous_cols.
 
         if self.return_target:
-            return sequence, sequence.clone()
+            return sequence, target
         return sequence
 
 
@@ -130,6 +161,7 @@ def build_train_dataloader(
     batch_size: int = 128,
     apply_augmentation: bool = True,
     jitter_scale: float = 0.01,
+    dropout_prob: float = 0.1,
     mmap_mode: Optional[str] = "r",
     num_workers: int = 0,
     pin_memory: bool = True,
@@ -144,6 +176,7 @@ def build_train_dataloader(
         npy_path=npy_path,
         apply_augmentation=apply_augmentation,
         jitter_scale=jitter_scale,
+        dropout_prob=dropout_prob,
         mmap_mode=mmap_mode,
         return_target=True,
     )

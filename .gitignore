@@ -64,3 +64,7 @@ Thumbs.db
 # Logs
 *.log
 logs/
+
+# Results
+results/*
+!results/.gitignore

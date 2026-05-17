@@ -1,160 +1,188 @@
-# AGENTS.md - Guidelines for AI Agents
+# AGENTS.md - Repository Guide
 
-CLIMA-µEMA is a deep learning early warning system (LSTM-Autoencoders) for meteorological anomaly detection using micro-station data from Costa Rica. It also includes a pipeline for extracting structured data from Costa Rican emergency weather alert PDFs.
+CLIMA-UEMA is a meteorological early-warning system for Costa Rica.
+It includes LSTM/autoencoder model code, station data pipelines, and PDF-based
+emergency alert extraction.
 
-## Build, Lint, and Test Commands
+Use this file as the source of truth for agentic work in this repo.
 
-### Dependencies
+## Repository Notes
+
+- This repo currently has no `.cursor/rules/`, `.cursorrules`, or
+  `.github/copilot-instructions.md` files.
+- Keep this file updated if those rules appear later.
+- Prefer small, focused changes that match the existing code style.
+
+## Setup
 
 ```bash
 pip install -r requirements.txt
+```
+
+- Install extra tooling if needed for local checks:
+
+```bash
 pip install pytest black flake8 mypy
 ```
 
-### Running Scripts
+## Build / Run Commands
+
+- Download station data:
 
 ```bash
-# Download micro-station data
 python data/stations/raw/ucr_uema_data_downloader.py
+```
 
-# Extract emergency alerts from PDFs (requires Google API key)
+- Extract emergency alerts from PDFs:
+
+```bash
 python -m preprocessing.emergency_alerts.extract_alerts_data --google-api-key YOUR_KEY
-python -m preprocessing.emergency_alerts.extract_alerts_data -h  # Show all options
 ```
 
-### Testing
+- Show CLI help:
 
 ```bash
-pytest                          # Run all tests
-pytest tests/test_file.py       # Run single test file
-pytest tests/test_file.py::test_function_name  # Run single test
-pytest -v                       # Verbose output
-pytest -k "pattern"             # Match pattern
+python -m preprocessing.emergency_alerts.extract_alerts_data -h
 ```
 
-- Write tests for all public functions with descriptive names: `test_<function>_<expected_behavior>`
-- Use pytest fixtures for setup/teardown, test edge cases and error conditions
-
-### Code Quality
+## Testing Commands
 
 ```bash
-black .     # Format code
-flake8 .    # Lint
-mypy .      # Type check
+pytest
+pytest -v
+pytest -k "pattern"
+pytest tests/test_file.py
+pytest tests/test_file.py::test_function_name
 ```
 
-## Code Style Guidelines
+- Single test file: `pytest tests/test_file.py`
+- Single test function: `pytest tests/test_file.py::test_function_name`
+- Prefer descriptive test names like `test_<function>_<expected_behavior>`.
+- Add tests for public functions, edge cases, and failure paths.
 
-### General
+## Quality Checks
 
-- Follow PEP 8 style guidelines
-- Use type hints for all function signatures
-- Add Google-style docstrings to public functions and classes
-- 4 spaces for indentation (no tabs), max line length: 100 characters
-- Use Black for automatic formatting with trailing commas in multi-line structures
+```bash
+black .
+flake8 .
+mypy .
+```
 
-### Imports
+- Run `black` before submitting code.
+- Run `pytest` after meaningful changes.
+- Run `flake8` and `mypy` when touching shared logic or type-heavy code.
 
-Order: stdlib, third-party, local (alphabetical within groups). Example: `csv`, `os`, `datetime` -> `requests`, `torch` -> `from src.utils import helpers`
+## Code Style
 
-### Type Hints
+- Follow PEP 8.
+- Use 4-space indentation.
+- Keep lines to 100 characters or fewer.
+- Use Black-compatible formatting and trailing commas in multiline literals.
+- Prefer explicit, readable code over clever shortcuts.
 
-- Use `Optional[X]` instead of `X | None` for Python < 3.10 compatibility
-- Use `dict[str, Any]` for dictionaries with mixed value types
+## Imports
+
+- Order imports as: stdlib, third-party, local.
+- Sort alphabetically within each group.
+- Prefer absolute imports within the project when practical.
+- Avoid unused imports and circular dependencies.
+
+Example order:
 
 ```python
-def train_model(
-    data: torch.Tensor,
-    hidden_size: int,
-    learning_rate: float = 0.001,
-) -> nn.Module:
+import csv
+from pathlib import Path
+
+import pandas as pd
+
+from preprocessing.stations.config import RAW_DATA_DIR
 ```
 
-### Naming Conventions
+## Type Hints
 
-- `snake_case` for functions, variables, modules
-- `PascalCase` for classes
-- `UPPERCASE` for constants
-- Descriptive names, avoid single-letter variables (except loops)
+- Add type hints to all function signatures.
+- Use `Optional[X]` instead of `X | None` for compatibility with older Python.
+- Use `dict[str, Any]` for heterogeneous dictionaries.
+- Keep return types explicit.
+- Prefer `Path` over raw strings for filesystem inputs.
 
-### Error Handling
+## Naming Conventions
 
-- Use specific exception types with informative error messages
-- Handle exceptions at the appropriate level
+- `snake_case` for functions, variables, and modules.
+- `PascalCase` for classes and Pydantic models.
+- `UPPERCASE` for constants.
+- Use descriptive names; avoid single-letter variables except in short loops.
+- Name tests for behavior, not implementation details.
 
-```python
-try:
-    response = requests.post(url, auth=auth)
-    response.raise_for_status()
-except requests.exceptions.RequestException as e:
-    log(f"HTTP Error: {e}")
+## Docstrings
+
+- Use Google-style docstrings for public functions and classes.
+- Document args, returns, and raised exceptions when relevant.
+- Keep internal helper docstrings short unless behavior is non-obvious.
+- For pipelines and CLIs, document side effects and output paths.
+
+## Error Handling
+
+- Raise specific exceptions with actionable messages.
+- Validate inputs early, near the boundary.
+- Handle exceptions at the right layer; do not swallow unexpected errors silently.
+- Prefer returning `None` only when that is an intentional API choice.
+- Include context in error messages, especially file paths and station names.
+
+## Logging
+
+- Use `logging` or `loguru`; keep usage consistent within a module.
+- Log with contextual details such as file names, station names, and alert IDs.
+- Use INFO for normal progress, WARNING for recoverable issues, ERROR for failures.
+- Do not log secrets, API keys, or full private payloads.
+
+## Data Handling
+
+- Use `pandas` for tabular data and `numpy` for numerical work.
+- Use `pathlib.Path` for paths, not `os.path`.
+- Preserve the repo's raw/processed data layout under `data/`.
+- Treat missing data explicitly; do not assume columns or rows exist.
+- Be careful with datetime parsing, resampling, and time zones.
+
+## Validation
+
+- Use Pydantic models for structured extracted data.
+- Add `Field(description="...")` to important schema fields.
+- Handle `pydantic.ValidationError` explicitly where parsing can fail.
+- Keep schemas strict enough to catch malformed alert payloads.
+
+## CLI Guidance
+
+- Use `argparse` or `click` for user-facing scripts.
+- Provide `-h` and `--help` support.
+- Read API keys from environment variables or CLI flags; never hardcode them.
+- Make default paths and outputs obvious.
+
+## Project Structure
+
+```text
+src/                Model code and utilities
+preprocessing/      Station pipelines and PDF alert extraction
+tests/              Pytest suite
+data/               Raw and processed datasets
 ```
 
-### Constants & File Organization
+## Domain + Environment
 
-- Group related constants at module level with uppercase and underscores
-- Keep related functionality together, separate concerns
-- Main execution code behind `if __name__ == "__main__":` guard
+- `preprocessing/emergency_alerts/` extracts structured data from CNE PDFs.
+- It uses docling OCR and Google Gemini, and writes outputs under
+  `data/emergency_alerts/processed/`.
+- Station processing should preserve the existing severity/region matching
+  behavior.
+- CUDA is disabled by default in alert extraction; keep docling CPU-first.
+- Use `.env` files locally, but never commit secrets or API keys.
 
-```python
-CR_TZ = timezone(timedelta(hours=-6))  # Costa Rica UTC-6
-FEATURE_COLS = ["temperature", "humidity", "pressure"]
-```
+## Git + Agent Behavior
 
-### Project Structure
-
-```
-src/
-  evaluation/    # Model evaluation metrics
-  models/        # Neural network architectures
-  training/      # Training loops and logic
-  utils/         # Helper functions
-preprocessing/
-  emergency_alerts/   # Emergency alert PDF extraction pipeline
-tests/           # Test files
-data/
-  emergency_alerts/  # Alert PDFs (raw/, processed/)
-  stations/          # Weather station CSV data (raw/, processed/)
-```
-
-### Preprocessing Module
-
-The `preprocessing/emergency_alerts/` module extracts structured data from Costa Rican emergency weather alert PDFs using docling for OCR and Google Gemini LLM for structured extraction. Output goes to CSV format, logs to `data/emergency_alerts/processed/alert_processing.log`.
-
-### Git Practices
-
-- Atomic commits with clear commit messages
-- Don't commit secrets (API keys, passwords)
-- Use `.gitignore`
-
-### Logging
-
-- Use `loguru` for logging (already in requirements.txt) or standard `logging` module
-- Configure loguru with appropriate levels: DEBUG for development, INFO for production
-- Include contextual information in log messages: `logger.info("Processing file: {}", file_path)`
-
-### Data Validation
-
-- Use `pydantic` for data validation and schema definition (already in requirements.txt)
-- Define models with descriptive field descriptions using `Field(description="...")`
-- Handle `PydanticValidationError` explicitly
-
-### CLI Tools
-
-- Use `click` or `argparse` for command-line interfaces
-- Add `--help` support and `-h` short flag
-- Use environment variables for API keys (never hardcode)
-
-### Data Handling
-
-- Use `pandas` for CSV data processing
-- Use `numpy` for numerical operations
-- Use `pathlib.Path` for file path operations (not os.path)
-- Follow the raw/processed directory structure in `data/`
-- Handle missing data explicitly with clear error messages
-
-### Environment
-
-- CUDA is disabled by default (`CUDA_VISIBLE_DEVICES=""`) to avoid library conflicts
-- Uses CPU for docling OCR to prevent CUDA runtime errors
-- Set environment variables in `.env` files (not committed to git)
+- Keep changes atomic and purpose-driven.
+- Do not overwrite unrelated user changes.
+- Prefer clear commit messages that explain why the change exists.
+- Read relevant files before editing and match existing style patterns.
+- When changing public APIs, update tests and docs together.
+- If a task touches tests or pipeline behavior, verify with the most targeted
+  test command first.
