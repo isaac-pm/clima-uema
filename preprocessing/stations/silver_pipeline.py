@@ -11,6 +11,7 @@ import pandas as pd
 
 from preprocessing.stations.config import (
     ALERTS_DATA_PATH,
+    ALERT_POST_BUFFER_HOURS,
     GENERAL_REGIONS,
     RAW_DATA_DIR,
     SENSOR_CUTOFFS,
@@ -61,8 +62,9 @@ def consolidate_station_data(station_name: str) -> pd.DataFrame:
     )
 
     if station_name in SENSOR_CUTOFFS:
-        for sensor_col, cutoff_time in SENSOR_CUTOFFS[station_name].items():
-            if sensor_col in luminous_df.columns:
+        for sensor_col in luminous_df.columns:
+            if sensor_col in SENSOR_CUTOFFS[station_name]:
+                cutoff_time = SENSOR_CUTOFFS[station_name][sensor_col]
                 cutoff_timestamp = pd.Timestamp(cutoff_time)
                 luminous_df = luminous_df[luminous_df.index >= cutoff_timestamp]
 
@@ -77,10 +79,25 @@ def resample_to_10min(df: pd.DataFrame) -> pd.DataFrame:
 
 def handle_missing_data(df: pd.DataFrame) -> pd.DataFrame:
     """Trim to overlap period and fill intermittent gaps."""
-    start_time = df.apply(lambda col: col.first_valid_index()).max()
-    end_time = df.apply(lambda col: col.last_valid_index()).min()
+    first_valid = df.apply(lambda col: col.first_valid_index())
+    last_valid = df.apply(lambda col: col.last_valid_index())
+    missing_cols = first_valid[first_valid.isna()].index.tolist()
+    if missing_cols:
+        raise ValueError(
+            "Columns with all-NaN data: " + ", ".join(missing_cols)
+        )
 
+    start_time = first_valid.max()
+    end_time = last_valid.min()
+
+    original_rows = len(df)
     df = df.loc[start_time:end_time].copy()
+    truncated_rows = original_rows - len(df)
+    if truncated_rows > 0:
+        print(
+            f"Truncated {truncated_rows} rows to align sensor overlap: "
+            f"{start_time} -> {end_time}"
+        )
     df["pressure_hPa"] = df["pressure_hPa"].interpolate(method="linear")
     df["precipitation_mm"] = df["precipitation_mm"].fillna(0)
     df["luminous_intensity_lux"] = df["luminous_intensity_lux"].fillna(0)
@@ -98,8 +115,13 @@ def add_cyclical_time_features(df: pd.DataFrame) -> pd.DataFrame:
     df["hour_cos"] = np.cos(2 * np.pi * hour_fraction)
 
     day_of_year = datetime_index.dayofyear
-    df["day_of_year_sin"] = np.sin(2 * np.pi * day_of_year / 365)
-    df["day_of_year_cos"] = np.cos(2 * np.pi * day_of_year / 365)
+    is_leap_year = (
+        (datetime_index.year % 4 == 0)
+        & ((datetime_index.year % 100 != 0) | (datetime_index.year % 400 == 0))
+    )
+    days_in_year = np.where(is_leap_year, 366.0, 365.0)
+    df["day_of_year_sin"] = np.sin(2 * np.pi * day_of_year / days_in_year)
+    df["day_of_year_cos"] = np.cos(2 * np.pi * day_of_year / days_in_year)
     return df
 
 
@@ -114,8 +136,7 @@ def normalize_alert_id(alert_number: str) -> str:
         year_part = "20" + year_part
 
     normalized_num = num_part.zfill(3)
-    normalized_year = year_part.zfill(4)
-    return f"{normalized_num}-{normalized_year}"
+    return f"{normalized_num}-{year_part}"
 
 
 def _check_region_match(
@@ -151,11 +172,11 @@ def _check_region_match(
 
         for general_region in GENERAL_REGIONS:
             if general_region.lower() in region_str:
-                return (
-                    True,
-                    matched_severity,
-                    normalize_alert_id(alert_row["alert_number"]),
-                )
+                matched_severity = severity
+                break
+
+        if matched_severity:
+            break
 
     if matched_severity:
         return (
@@ -170,6 +191,7 @@ def _check_region_match(
 def add_alert_features(df: pd.DataFrame, station_name: str) -> pd.DataFrame:
     """Add meteorological emergency alert features to station data."""
     alerts_df = pd.read_csv(ALERTS_DATA_PATH)
+    alerts_df = alerts_df.dropna(subset=["issue_date", "issue_time"])
     alerts_df["alert_datetime"] = pd.to_datetime(
         alerts_df["issue_date"].astype(str) + " " + alerts_df["issue_time"].astype(str)
     )
@@ -190,33 +212,30 @@ def add_alert_features(df: pd.DataFrame, station_name: str) -> pd.DataFrame:
         )
 
     events_df = pd.DataFrame(events)
+    events_df = events_df[events_df["is_active_alert"]].copy()
     if events_df.empty:
         df["is_active_alert"] = False
         df["alert_severity"] = None
         df["alert_id"] = None
         return df
 
-    events_df["matched_alert_time"] = events_df["alert_datetime"]
-    events_df = events_df.set_index("alert_datetime")
-
     df = df.reset_index().rename(columns={"time": "timestamp"})
     merged_df = pd.merge_asof(
         df.sort_values("timestamp"),
-        events_df.sort_index(),
+        events_df.sort_values("alert_datetime"),
         left_on="timestamp",
-        right_index=True,
-        direction="backward",
+        right_on="alert_datetime",
+        direction="forward",
+        tolerance=pd.Timedelta(minutes=10),
     )
 
-    merged_df["is_active_alert"] = merged_df["is_active_alert"].fillna(False).astype(bool)
-
-    if "matched_alert_time" in merged_df.columns:
-        elapsed = merged_df["timestamp"] - merged_df["matched_alert_time"]
-        expired_mask = elapsed > pd.Timedelta(days=3)
-        merged_df.loc[expired_mask, "is_active_alert"] = False
-        merged_df.loc[expired_mask, "alert_severity"] = None
-        merged_df.loc[expired_mask, "alert_id"] = None
-        merged_df = merged_df.drop(columns=["matched_alert_time"])
+    merged_df["is_active_alert"] = (
+        merged_df["is_active_alert"].fillna(False).astype(bool)
+    )
+    inactive_mask = ~merged_df["is_active_alert"]
+    merged_df.loc[inactive_mask, "alert_severity"] = None
+    merged_df.loc[inactive_mask, "alert_id"] = None
+    merged_df = merged_df.drop(columns=["alert_datetime"])
 
     merged_df = merged_df.rename(columns={"timestamp": "time"}).set_index("time")
     return merged_df

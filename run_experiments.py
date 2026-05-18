@@ -8,9 +8,24 @@ from pathlib import Path
 
 from src.models.lstm_ae import LSTMAutoencoder
 from src.utils.dataset import NpySequenceDataset, DeviceDataLoader
+from preprocessing.stations.gold_pipeline import FEATURES
 
 
-def train_model(model, train_loader, val_loader, device, epochs=50, patience=5):
+def get_dataset_size(loader) -> int:
+    if hasattr(loader, "dataloader"):
+        return len(loader.dataloader.dataset)
+    return len(loader.dataset)
+
+
+def train_model(
+    model,
+    train_loader,
+    val_loader,
+    device,
+    epochs=50,
+    patience=5,
+    checkpoint_path: Path | None = None,
+):
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
     criterion = nn.MSELoss()
 
@@ -29,7 +44,7 @@ def train_model(model, train_loader, val_loader, device, epochs=50, patience=5):
             optimizer.step()
             train_loss += loss.item() * batch_X.size(0)
 
-        train_loss /= len(train_loader.dataloader.dataset)
+        train_loss /= get_dataset_size(train_loader)
 
         model.eval()
         val_loss = 0.0
@@ -38,11 +53,13 @@ def train_model(model, train_loader, val_loader, device, epochs=50, patience=5):
                 reconstructed_X = model(batch_X)
                 loss = criterion(reconstructed_X, target_X)
                 val_loss += loss.item() * batch_X.size(0)
-        val_loss /= len(val_loader.dataloader.dataset)
+        val_loss /= get_dataset_size(val_loader)
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             best_model_state = model.state_dict()
+            if checkpoint_path is not None:
+                torch.save(best_model_state, checkpoint_path)
             epochs_no_improve = 0
         else:
             epochs_no_improve += 1
@@ -55,34 +72,44 @@ def train_model(model, train_loader, val_loader, device, epochs=50, patience=5):
     return model
 
 
-def compute_reconstruction_error(model, dataloader, device):
+def compute_reconstruction_error(model, dataloader):
     model.eval()
     errors = []
     with torch.no_grad():
         for batch_X, target_X in dataloader:
             reconstructed_X = model(batch_X)
-            # MSE per sequence
-            # batch_X shape: (batch_size, 144, 7)
-            mse = torch.mean((target_X - reconstructed_X) ** 2, dim=(1, 2))
+            # MSE per sequence (continuous features only)
+            cont_cols = [
+                FEATURES.index(name)
+                for name in [
+                    "pressure_hPa",
+                    "precipitation_mm",
+                    "luminous_intensity_lux",
+                ]
+                if name in FEATURES
+            ]
+            rec_cont = reconstructed_X[:, :, cont_cols]
+            tgt_cont = target_X[:, :, cont_cols]
+            mse = torch.mean((tgt_cont - rec_cont) ** 2, dim=(1, 2))
             errors.extend(mse.cpu().numpy())
     return np.array(errors)
 
 
-def calibrate_threshold(model, dataloader, device, percentile=95):
-    errors = compute_reconstruction_error(model, dataloader, device)
+def calibrate_threshold(model, dataloader, percentile=95):
+    errors = compute_reconstruction_error(model, dataloader)
     threshold = np.percentile(errors, percentile)
     return threshold
 
 
-def evaluate_model(model, test_loader, threshold, device, y_true):
-    errors = compute_reconstruction_error(model, test_loader, device)
+def evaluate_model(model, test_loader, threshold, y_true):
+    errors = compute_reconstruction_error(model, test_loader)
     y_pred = (errors > threshold).astype(int)
 
     precision = precision_score(y_true, y_pred, zero_division=0)
     recall = recall_score(y_true, y_pred, zero_division=0)
     f1 = f1_score(y_true, y_pred, zero_division=0)
 
-    tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
+    tn, fp, fn, tp = confusion_matrix(y_true, y_pred, labels=[0, 1]).ravel()
     fpr = fp / (fp + tn) if (fp + tn) > 0 else 0.0
 
     return precision, recall, f1, fpr
@@ -101,13 +128,16 @@ def prepare_dataloaders(
     val_indices = list(range(train_size, full_length))
 
     # Instantiate separate datasets: Train gets augmentation, Val remains pristine
+    base_dataset = NpySequenceDataset(npy_path=npy_path, apply_augmentation=False)
     train_dataset = NpySequenceDataset(
         npy_path=npy_path, apply_augmentation=apply_augmentation
     )
-    val_dataset = NpySequenceDataset(npy_path=npy_path, apply_augmentation=False)
+    train_std = train_dataset.compute_feature_std_for_indices(train_indices)
+    train_sigma = np.maximum(train_std * train_dataset.jitter_scale, 1e-8)
+    train_dataset.noise_sigma = torch.tensor(train_sigma, dtype=torch.float32)
 
     train_subset = torch.utils.data.Subset(train_dataset, train_indices)
-    val_subset = torch.utils.data.Subset(val_dataset, val_indices)
+    val_subset = torch.utils.data.Subset(base_dataset, val_indices)
 
     # We can still shuffle the train_loader batches, but the data pool is strictly separated from val
     train_loader = DeviceDataLoader(
@@ -118,9 +148,8 @@ def prepare_dataloaders(
     )
 
     # Calibration uses the entire pristine dataset
-    calib_dataset = NpySequenceDataset(npy_path=npy_path, apply_augmentation=False)
     calib_loader = DeviceDataLoader(
-        DataLoader(calib_dataset, batch_size=batch_size, shuffle=False), device
+        DataLoader(base_dataset, batch_size=batch_size, shuffle=False), device
     )
 
     return train_loader, val_loader, calib_loader
@@ -129,6 +158,13 @@ def prepare_dataloaders(
 def get_test_loader_and_y(station_prefix, device, batch_size=128):
     x_path = f"{station_prefix}_X_test.npy"
     y_path = f"{station_prefix}_y_test.npy"
+
+    if not Path(x_path).is_file():
+        print(f"Missing test file: {x_path}")
+        return None, None
+    if not Path(y_path).is_file():
+        print(f"Missing test file: {y_path}")
+        return None, None
 
     test_dataset = NpySequenceDataset(npy_path=x_path, apply_augmentation=False)
     test_loader = DeviceDataLoader(
@@ -146,6 +182,7 @@ def run_experiment_pipeline(
     device,
     epochs=20,
     is_global=False,
+    results_path: Path | None = None,
 ):
     results = []
 
@@ -158,16 +195,28 @@ def run_experiment_pipeline(
         )
 
         model = LSTMAutoencoder().to(device)
-        model = train_model(model, train_loader, val_loader, device, epochs=epochs)
-        threshold = calibrate_threshold(model, calib_loader, device, percentile=95)
+        checkpoint_path = None
+        if results_path is not None:
+            checkpoint_path = results_path.with_suffix("").with_name(
+                f"{pipeline_name.lower().replace(' ', '_')}_best_model.pt"
+            )
+        model = train_model(
+            model,
+            train_loader,
+            val_loader,
+            device,
+            epochs=epochs,
+            checkpoint_path=checkpoint_path,
+        )
+        threshold = calibrate_threshold(model, calib_loader, percentile=95)
 
         # Evaluate on all local test sets
         for prefix in test_prefixes:
             station_name = Path(prefix).name
             test_loader, y_true = get_test_loader_and_y(prefix, device)
-            p, r, f1, fpr = evaluate_model(
-                model, test_loader, threshold, device, y_true
-            )
+            if test_loader is None or y_true is None:
+                continue
+            p, r, f1, fpr = evaluate_model(model, test_loader, threshold, y_true)
 
             results.append(
                 {
@@ -182,6 +231,9 @@ def run_experiment_pipeline(
             print(
                 f"[{station_name}] P: {p:.4f} | R: {r:.4f} | F1: {f1:.4f} | FPR: {fpr:.4f}"
             )
+
+        if results_path is not None:
+            pd.DataFrame(results).to_csv(results_path, index=False)
 
     else:
         # Train local model for each station
@@ -195,13 +247,25 @@ def run_experiment_pipeline(
             )
 
             model = LSTMAutoencoder().to(device)
-            model = train_model(model, train_loader, val_loader, device, epochs=epochs)
-            threshold = calibrate_threshold(model, calib_loader, device, percentile=95)
+            checkpoint_path = None
+            if results_path is not None:
+                checkpoint_path = results_path.with_suffix("").with_name(
+                    f"{pipeline_name.lower().replace(' ', '_')}_{station_name}_best_model.pt"
+                )
+            model = train_model(
+                model,
+                train_loader,
+                val_loader,
+                device,
+                epochs=epochs,
+                checkpoint_path=checkpoint_path,
+            )
+            threshold = calibrate_threshold(model, calib_loader, percentile=95)
 
             test_loader, y_true = get_test_loader_and_y(prefix, device)
-            p, r, f1, fpr = evaluate_model(
-                model, test_loader, threshold, device, y_true
-            )
+            if test_loader is None or y_true is None:
+                continue
+            p, r, f1, fpr = evaluate_model(model, test_loader, threshold, y_true)
 
             results.append(
                 {
@@ -216,6 +280,9 @@ def run_experiment_pipeline(
             print(
                 f"[{station_name}] P: {p:.4f} | R: {r:.4f} | F1: {f1:.4f} | FPR: {fpr:.4f}"
             )
+
+            if results_path is not None:
+                pd.DataFrame(results).to_csv(results_path, index=False)
 
     return results
 
@@ -255,6 +322,10 @@ def main():
     epochs = 20  # You can adjust this for quicker testing or longer convergence
     all_results = []
 
+    results_dir = Path("results")
+    results_dir.mkdir(exist_ok=True)
+    timestamp = pd.Timestamp.now().strftime("%Y_%m_%d_%H%M")
+
     # 1. Local Baseline (No Augmentation)
     results_local_base = run_experiment_pipeline(
         "Local Baseline",
@@ -264,6 +335,7 @@ def main():
         device=device,
         epochs=epochs,
         is_global=False,
+        results_path=results_dir / f"{timestamp}_local_baseline_metrics.csv",
     )
     all_results.extend(results_local_base)
 
@@ -276,6 +348,7 @@ def main():
         device=device,
         epochs=epochs,
         is_global=True,
+        results_path=results_dir / f"{timestamp}_global_baseline_metrics.csv",
     )
     all_results.extend(results_global_base)
 
@@ -288,6 +361,7 @@ def main():
         device=device,
         epochs=epochs,
         is_global=False,
+        results_path=results_dir / f"{timestamp}_local_augmented_metrics.csv",
     )
     all_results.extend(results_local_aug)
 
@@ -300,14 +374,13 @@ def main():
         device=device,
         epochs=epochs,
         is_global=True,
+        results_path=results_dir / f"{timestamp}_global_augmented_metrics.csv",
     )
     all_results.extend(results_global_aug)
 
     # Save results
-    results_dir = Path("results")
-    results_dir.mkdir(exist_ok=True)
     df = pd.DataFrame(all_results)
-    output_path = results_dir / "experiment_metrics.csv"
+    output_path = results_dir / f"{timestamp}_experiment_metrics.csv"
     df.to_csv(output_path, index=False)
 
     print(f"\nAll experiments complete! Metrics saved to {output_path}")

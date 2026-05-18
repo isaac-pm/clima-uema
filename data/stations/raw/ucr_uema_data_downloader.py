@@ -224,6 +224,8 @@ def fetch_and_save_data(
     api_endpoint = f"{grafana_url}/api/ds/query"
     auth = (username, password)
     headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    max_retries = 3
+    retry_delay = 2.0
 
     for feature_name, db_field in selected_features.items():
         if stop_event and stop_event.is_set():
@@ -249,16 +251,19 @@ def fetch_and_save_data(
 
             log(f"\n--- Processing {feature_name} for {station_filename} ---")
 
-            with open(filepath, mode="w", newline="") as file:
+            temp_path = f"{filepath}.tmp"
+            with open(temp_path, mode="w", newline="") as file:
                 writer = csv.writer(file)
                 writer.writerow(["time", column_header])
 
                 total_rows = 0
                 current_start = start_date
 
+                completed = True
                 while current_start < end_date:
                     if stop_event and stop_event.is_set():
                         log("[!] Stop requested. Aborting current station download.")
+                        completed = False
                         break
                     current_end = current_start + timedelta(days=30)
                     if current_end > end_date:
@@ -283,48 +288,68 @@ def fetch_and_save_data(
                         pressure_offset,
                     )
 
-                    try:
-                        response = requests.post(
-                            api_endpoint,
-                            auth=auth,
-                            headers=headers,
-                            data=json.dumps(payload),
-                        )
-                        response.raise_for_status()
-                        data = response.json()
+                    attempt = 0
+                    while attempt < max_retries:
+                        try:
+                            response = requests.post(
+                                api_endpoint,
+                                auth=auth,
+                                headers=headers,
+                                data=json.dumps(payload),
+                            )
+                            response.raise_for_status()
+                            data = response.json()
 
-                        frames = data.get("results", {}).get("A", {}).get("frames", [])
-                        if frames:
-                            frame = frames[0]
-                            if (
-                                "data" in frame
-                                and "values" in frame["data"]
-                                and len(frame["data"]["values"]) >= 2
-                            ):
-                                time_array = frame["data"]["values"][0]
-                                value_array = frame["data"]["values"][1]
+                            frames = data.get("results", {}).get("A", {}).get("frames", [])
+                            if frames:
+                                frame = frames[0]
+                                if (
+                                    "data" in frame
+                                    and "values" in frame["data"]
+                                    and len(frame["data"]["values"]) >= 2
+                                ):
+                                    time_array = frame["data"]["values"][0]
+                                    value_array = frame["data"]["values"][1]
 
-                                for t, v in zip(time_array, value_array):
-                                    dt = datetime.fromtimestamp(
-                                        t / 1000.0, tz=timezone.utc
-                                    ).astimezone(CR_TZ)
-                                    writer.writerow(
-                                        [dt.strftime("%Y-%m-%d %H:%M:%S"), v]
+                                    for t, v in zip(time_array, value_array):
+                                        dt = datetime.fromtimestamp(
+                                            t / 1000.0, tz=timezone.utc
+                                        ).astimezone(CR_TZ)
+                                        writer.writerow(
+                                            [dt.strftime("%Y-%m-%d %H:%M:%S"), v]
+                                        )
+                                        total_rows += 1
+                                else:
+                                    log(
+                                        "  [!] Frame found but no values present. Skipping."
                                     )
-                                    total_rows += 1
                             else:
-                                log(
-                                    "  [!] Frame found but no values present. Skipping."
-                                )
-                        else:
-                            log("  [!] No frames returned. Skipping.")
+                                log("  [!] No frames returned. Skipping.")
+                            break
 
-                    except requests.exceptions.RequestException as e:
-                        log(f"  [!] HTTP Error: {e}")
+                        except requests.exceptions.RequestException as e:
+                            attempt += 1
+                            if attempt >= max_retries:
+                                log(
+                                    "  [!] HTTP Error after retries: "
+                                    f"{e} (range {current_start:%Y-%m-%d} to {current_end:%Y-%m-%d})"
+                                )
+                                break
+                            backoff = retry_delay * (2 ** (attempt - 1))
+                            log(
+                                "  [!] HTTP Error: "
+                                f"{e} (retry {attempt}/{max_retries} in {backoff:.1f}s)"
+                            )
+                            threading.Event().wait(backoff)
 
                     current_start = current_end
 
-            log(f"Finished saving: {filepath} | Total rows written: {total_rows}")
+            if completed:
+                os.replace(temp_path, filepath)
+                log(f"Finished saving: {filepath} | Total rows written: {total_rows}")
+            else:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
     log("\n=== ALL DOWNLOADS COMPLETE ===")
 
 

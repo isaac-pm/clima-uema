@@ -9,6 +9,11 @@ import numpy as np
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
+from preprocessing.stations.config import (
+    ALERT_POST_BUFFER_HOURS,
+    ALERT_PRE_BUFFER_HOURS,
+)
+
 FEATURES = [
     "pressure_hPa",
     "precipitation_mm",
@@ -32,31 +37,49 @@ def read_station_csv(path: Path) -> pd.DataFrame:
     return df
 
 
-def create_anomalous_mask(df: pd.DataFrame, buffer_hours: int = 72) -> pd.Series:
-    """Create buffered boolean `is_anomalous` mask using rolling dilation."""
+def create_anomalous_mask(
+    df: pd.DataFrame,
+    pre_buffer_hours: int = ALERT_PRE_BUFFER_HOURS,
+    post_buffer_hours: int = ALERT_POST_BUFFER_HOURS,
+) -> pd.Series:
+    """Create asymmetric buffered boolean anomalous mask.
+
+    Dilates active alert timesteps backwards by ``pre_buffer_hours`` (to capture
+    developing conditions before the alert is issued) and forwards by
+    ``post_buffer_hours`` (to cover event duration and sensor recovery).
+    """
     if "is_active_alert" not in df.columns:
         raise KeyError("Input CSV must contain `is_active_alert` column")
 
     active = df["is_active_alert"].fillna(False).astype(str).str.lower()
-    active_bool = active.isin(["true", "1", "t", "yes"]) | (active == "true")
+    active_int = active.isin(["true", "1", "t", "yes"]).astype(int)
 
-    periods = buffer_hours * 6
-    window_size = (2 * periods) + 1
+    inferred_freq = pd.infer_freq(df.index)
+    if not inferred_freq:
+        raise ValueError("Unable to infer time frequency for anomaly buffering")
 
-    mask = (
-        active_bool.astype(int)
-        .rolling(window=window_size, center=True, min_periods=1)
+    step = pd.to_timedelta(inferred_freq)
+    if step <= pd.Timedelta(0):
+        raise ValueError(f"Invalid inferred frequency: {inferred_freq}")
+
+    pre_periods = int(round(pd.Timedelta(hours=pre_buffer_hours) / step))
+    post_periods = int(round(pd.Timedelta(hours=post_buffer_hours) / step))
+
+    post_mask = active_int.rolling(window=post_periods + 1, min_periods=1).max()
+    pre_mask = (
+        active_int.iloc[::-1]
+        .rolling(window=pre_periods + 1, min_periods=1)
         .max()
-        .astype(bool)
+        .iloc[::-1]
     )
 
+    mask = (pre_mask + post_mask) > 0
     return pd.Series(mask.values, index=df.index, dtype=bool)
 
 
 def split_df_temporally(
     df: pd.DataFrame,
     train_ratio: float = 0.8,
-    random_state: int = 42,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Split DataFrame temporally into train (earlier) and test (later) portions."""
     n = len(df)
@@ -66,10 +89,12 @@ def split_df_temporally(
     return train_df, test_df
 
 
-def fit_strict_scalers(df: pd.DataFrame, normal_mask: pd.Series) -> Dict[str, Any]:
+def fit_strict_scalers(
+    df: pd.DataFrame, anomalous_mask: pd.Series
+) -> Dict[str, Any]:
     """Fit scalers on the normal portion of the dataset."""
     scalers: Dict[str, Any] = {}
-    normal_df = df.loc[~normal_mask]
+    normal_df = df.loc[~anomalous_mask]
 
     if "pressure_hPa" in normal_df:
         pressure_scaler = StandardScaler()
@@ -113,7 +138,9 @@ def apply_scalers(df: pd.DataFrame, scalers: Dict[str, Any]) -> pd.DataFrame:
 
     for col in FEATURES:
         if col not in out.columns:
-            out[col] = 0.0
+            if col.endswith(("_sin", "_cos")):
+                raise KeyError(f"Missing cyclical feature column: {col}")
+            raise KeyError(f"Missing physics feature column: {col}")
 
     return out[FEATURES].astype(float)
 

@@ -34,73 +34,56 @@ clima-uema/
 ```
 
 Notes:
+
 - `preprocessing/stations/*pipeline.py` contains reusable processing logic.
 - `preprocessing/stations/extract_*.py` are thin CLI entrypoints.
 - `data/stations/raw/ucr_uema_data_downloader.py` remains a standalone GUI downloader.
-
-## Setup
-
-Install dependencies:
-
-```bash
-pip install -r requirements.txt
-pip install pytest black flake8 mypy
-```
 
 ## How To Run
 
 Run commands from the repository root.
 
-### 1) Download raw station data (standalone GUI)
+1. Install dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+2. Download raw station data (GUI)
 
 ```bash
 python data/stations/raw/ucr_uema_data_downloader.py
 ```
 
-This opens a Tkinter app where you configure credentials, date range, stations, and features.
-
-### 2) Extract emergency alerts from PDFs
+3. Extract emergency alerts from PDFs (requires Google API key)
 
 ```bash
 python -m preprocessing.emergency_alerts.extract_alerts_data --google-api-key YOUR_KEY
-python -m preprocessing.emergency_alerts.extract_alerts_data -h
 ```
 
-Input PDFs: `data/emergency_alerts/raw/`
-Output CSV: `data/emergency_alerts/processed/alerts_data.csv`
-
-### 3) Build station Silver layer
+4. Build station Silver layer
 
 ```bash
-python -m preprocessing.stations.extract_stations_data_silver_layer --help
 python -m preprocessing.stations.extract_stations_data_silver_layer
 ```
 
-Reads raw station CSVs and writes processed station files to `data/stations/processed/silver/`.
-
-### 4) Build station Gold layer (per station)
+5. Build station Gold layer (per station)
 
 ```bash
-python -m preprocessing.stations.extract_stations_data_gold_layer --help
 python -m preprocessing.stations.extract_stations_data_gold_layer
 ```
 
-Writes per-station arrays into `data/stations/processed/gold/`:
-- `<station>_X_train.npy`
-- `<station>_X_test.npy`
-- `<station>_y_test.npy`
-
-### 5) Build global Gold layer (all stations combined)
+6. Build global Gold layer (all stations combined)
 
 ```bash
-python -m preprocessing.stations.extract_global_gold_layer --help
 python -m preprocessing.stations.extract_global_gold_layer
 ```
 
-Writes global arrays into `data/stations/processed/gold/`:
-- `global_X_train.npy`
-- `global_X_test.npy`
-- `global_y_test.npy`
+7. Run experiments and generate metrics
+
+```bash
+python run_experiments.py
+```
 
 ## Data Processing Strategy
 
@@ -157,25 +140,16 @@ The gold layer (`preprocessing/stations/gold_pipeline.py`) converts silver dataf
 
 2. **Scaler fitting on normal data only**: Normalization parameters are learned exclusively from non-anomalous data. This prevents anomalous readings from distorting the scale parameters, which would make the model less sensitive to anomalies during training
 
-3. **Feature scaling**: 
+3. **Feature scaling**:
    - Pressure uses StandardScaler (z-score normalization) because it has a roughly Gaussian distribution
    - Precipitation and luminous intensity use MinMaxScaler (0-1 range) because they are right-skewed and bounded at zero
    - Cyclical features are already in [-1, 1] range, so they're passed through unchanged
 
 4. **Sliding windows**: The time series is converted into fixed-length sequences (144 timesteps = 24 hours at 10-min resolution). Windows with stride=6 create overlapping samples, increasing training data density
 
-5. **Train/test split**: 
+5. **Train/test split**:
    - All anomalous windows go to the test set (the model should detect these as anomalous)
    - 20% of normal windows are sampled for the test set (the model should not flag these)
    - The remaining 80% of normal windows form the training set
 
 **Global vs. Per-Station Gold**: The per-station pipeline trains separate models per location (captures local patterns). The global pipeline combines all stations into one model (captures cross-regional patterns).
-
-## Quality and Tests
-
-```bash
-pytest
-flake8 .
-mypy .
-black .
-```

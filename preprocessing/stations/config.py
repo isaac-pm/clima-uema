@@ -50,6 +50,15 @@ GENERAL_REGIONS = [
 
 SENSOR_CUTOFFS = {
     "sede-central_finca-2": {
-        "luminous_intensity_lux": "2025-05-20 18:20:00",
+        "luminous_intensity_lux": "2025-05-20 18:20:00",  # This sensor started working on this date. We can discard earlier data.
     },
 }
+
+# Anomaly labelling buffer: asymmetric around alert issue time.
+# Pre-alert: captures developing conditions within the CNE forecast horizon.
+# Post-alert: covers event duration + sensor recovery (pressure, precipitation).
+# Reasoning: CNE alert lead time is typically 12-48h, so 48h pre captures the
+# full forecast horizon without going too far back into genuinely normal data.
+# Post window covers event duration + pressure/precipitation recovery.
+ALERT_PRE_BUFFER_HOURS: int = 48
+ALERT_POST_BUFFER_HOURS: int = 120

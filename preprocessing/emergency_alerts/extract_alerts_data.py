@@ -40,29 +40,44 @@ class ColoredFormatter(logging.Formatter):
         return super().format(record)
 
 
-root_logger = logging.getLogger()
-root_logger.setLevel(logging.INFO)
-
 LOG_DIR: Path = Path("logs")
 LOG_FILE: Path = LOG_DIR / "emergency_alerts" / "alert_processing.log"
 
-console_handler = logging.StreamHandler(sys.stdout)
-console_handler.setFormatter(
-    ColoredFormatter("%(asctime)s - %(levelname)s - %(message)s")
-)
-root_logger.addHandler(console_handler)
-
-LOG_DIR.mkdir(parents=True, exist_ok=True)
-LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
-file_handler = logging.FileHandler(LOG_FILE, mode="w")
-file_handler.setFormatter(
-    logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-)
-root_logger.addHandler(file_handler)
+_LOGGING_CONFIGURED = False
 
 log = logging.getLogger(__name__)
 
-os.environ["CUDA_VISIBLE_DEVICES"] = ""
+
+def setup_logging(log_dir: Path = LOG_DIR, log_file: Path = LOG_FILE) -> None:
+    """Configure console + file logging for this pipeline."""
+    global _LOGGING_CONFIGURED
+    if _LOGGING_CONFIGURED:
+        return
+
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(
+        ColoredFormatter("%(asctime)s - %(levelname)s - %(message)s")
+    )
+    root_logger.addHandler(console_handler)
+
+    file_handler = logging.FileHandler(log_file, mode="w")
+    file_handler.setFormatter(
+        logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+    )
+    root_logger.addHandler(file_handler)
+
+    _LOGGING_CONFIGURED = True
+
+
+def configure_runtime() -> None:
+    """Apply runtime settings for docling/GPU behavior."""
+    os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 
 class AlertSchema(BaseModel):
@@ -266,6 +281,7 @@ def extract_structured_data(
     except PydanticValidationError as e:
         log.error(f"Pydantic validation failed: {e}")
         log.debug(f"Raw data: {data}")
+        log.debug(f"Raw response: {response[:500]}")
         return None
 
 
@@ -323,7 +339,7 @@ def log_failed_pdf(pdf_path: Path, reason: str, failed_log: Path) -> None:
     """
     failed_log.parent.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    with open(failed_log, mode="w", encoding="utf-8") as f:
+    with open(failed_log, mode="a", encoding="utf-8") as f:
         f.write(f"{timestamp} | {pdf_path.name} | {reason}\n")
     log.warning(f"Logged failure for {pdf_path.name}: {reason}")
 
@@ -452,6 +468,9 @@ def main() -> None:
 
     GOOGLE_API_KEY = args.google_api_key
     GEMINI_MODEL = args.gemini_model
+
+    setup_logging()
+    configure_runtime()
 
     log.info("=" * 60)
     log.info("Starting PDF Processing Pipeline")

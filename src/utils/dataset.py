@@ -71,6 +71,8 @@ class NpySequenceDataset(Dataset[Union[Tensor, Tuple[Tensor, Tensor]]]):
         self.window_size = int(self.data.shape[1])
         self.num_features = int(self.data.shape[2])
 
+        assert max(self.dropout_length) < self.window_size
+
         feature_std = self._compute_feature_std(chunk_size=chunk_size)
         sigma = np.maximum(feature_std * self.jitter_scale, 1e-8)
         self.noise_sigma = torch.tensor(sigma, dtype=torch.float32)
@@ -87,6 +89,29 @@ class NpySequenceDataset(Dataset[Union[Tensor, Tuple[Tensor, Tensor]]]):
         for start in range(0, self.num_samples, chunk_size):
             end = min(start + chunk_size, self.num_samples)
             chunk = np.asarray(self.data[start:end], dtype=np.float64)
+            sum_x += chunk.sum(axis=(0, 1))
+            sum_x2 += np.square(chunk).sum(axis=(0, 1))
+            total_count += chunk.shape[0] * chunk.shape[1]
+
+        mean = sum_x / total_count
+        var = (sum_x2 / total_count) - np.square(mean)
+        var = np.maximum(var, 1e-12)
+        return np.sqrt(var)
+
+    def compute_feature_std_for_indices(
+        self, indices: Sequence[int], chunk_size: int = 2048
+    ) -> np.ndarray:
+        """Compute per-feature std for a subset of sample indices."""
+        if not indices:
+            return np.ones((self.num_features,), dtype=np.float64)
+
+        sum_x = np.zeros((self.num_features,), dtype=np.float64)
+        sum_x2 = np.zeros((self.num_features,), dtype=np.float64)
+        total_count = 0
+
+        for start in range(0, len(indices), chunk_size):
+            batch_idx = indices[start : start + chunk_size]
+            chunk = np.asarray(self.data[batch_idx], dtype=np.float64)
             sum_x += chunk.sum(axis=(0, 1))
             sum_x2 += np.square(chunk).sum(axis=(0, 1))
             total_count += chunk.shape[0] * chunk.shape[1]

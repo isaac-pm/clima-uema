@@ -8,7 +8,12 @@ from pathlib import Path
 
 import numpy as np
 
-from preprocessing.stations.config import PROCESSED_GOLD_DIR, PROCESSED_SILVER_DIR
+from preprocessing.stations.config import (
+    ALERT_POST_BUFFER_HOURS,
+    ALERT_PRE_BUFFER_HOURS,
+    PROCESSED_GOLD_DIR,
+    PROCESSED_SILVER_DIR,
+)
 from preprocessing.stations.gold_pipeline import (
     apply_scalers,
     create_anomalous_mask,
@@ -29,7 +34,8 @@ def process_station(
     gold_dir: Path,
     window_size: int = 144,
     stride: int = 6,
-    buffer_hours: int = 72,
+    pre_buffer_hours: int = ALERT_PRE_BUFFER_HOURS,
+    post_buffer_hours: int = ALERT_POST_BUFFER_HOURS,
     train_ratio: float = 0.8,
 ) -> None:
     """Process single station CSV and save gold-layer NumPy arrays.
@@ -43,8 +49,14 @@ def process_station(
     df = read_station_csv(csv_path)
     train_df, test_df = split_df_temporally(df, train_ratio=train_ratio)
 
-    anomalous_mask = create_anomalous_mask(df, buffer_hours=buffer_hours)
-    train_anomalous_mask = create_anomalous_mask(train_df, buffer_hours=buffer_hours)
+    anomalous_mask = create_anomalous_mask(
+        df, pre_buffer_hours=pre_buffer_hours, post_buffer_hours=post_buffer_hours
+    )
+    train_anomalous_mask = create_anomalous_mask(
+        train_df,
+        pre_buffer_hours=pre_buffer_hours,
+        post_buffer_hours=post_buffer_hours,
+    )
 
     scalers = fit_strict_scalers(train_df, train_anomalous_mask)
     scaled = apply_scalers(df, scalers)
@@ -91,7 +103,18 @@ def main() -> None:
     )
     parser.add_argument("--window-size", type=int, default=144)
     parser.add_argument("--stride", type=int, default=6)
-    parser.add_argument("--buffer-hours", type=int, default=72)
+    parser.add_argument(
+        "--pre-buffer-hours",
+        type=int,
+        default=ALERT_PRE_BUFFER_HOURS,
+        help="Hours to dilate anomaly mask before alert issue time (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--post-buffer-hours",
+        type=int,
+        default=ALERT_POST_BUFFER_HOURS,
+        help="Hours to dilate anomaly mask after alert issue time (default: %(default)s)",
+    )
     parser.add_argument(
         "--train-ratio",
         type=float,
@@ -113,7 +136,8 @@ def main() -> None:
                 args.gold_dir,
                 window_size=args.window_size,
                 stride=args.stride,
-                buffer_hours=args.buffer_hours,
+                pre_buffer_hours=args.pre_buffer_hours,
+                post_buffer_hours=args.post_buffer_hours,
                 train_ratio=args.train_ratio,
             )
         except Exception as exc:

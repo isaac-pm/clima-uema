@@ -9,7 +9,12 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from preprocessing.stations.config import PROCESSED_GOLD_DIR, PROCESSED_SILVER_DIR
+from preprocessing.stations.config import (
+    ALERT_POST_BUFFER_HOURS,
+    ALERT_PRE_BUFFER_HOURS,
+    PROCESSED_GOLD_DIR,
+    PROCESSED_SILVER_DIR,
+)
 from preprocessing.stations.gold_pipeline import (
     build_global_windows,
     create_anomalous_mask,
@@ -26,7 +31,8 @@ logger = logging.getLogger(__name__)
 
 def load_station_data_with_masks(
     silver_files: list[Path],
-    buffer_hours: int,
+    pre_buffer_hours: int = ALERT_PRE_BUFFER_HOURS,
+    post_buffer_hours: int = ALERT_POST_BUFFER_HOURS,
     train_ratio: float = 0.8,
 ) -> tuple[
     dict[str, pd.DataFrame],
@@ -52,8 +58,14 @@ def load_station_data_with_masks(
         df = read_station_csv(csv_path)
         train_df, _ = split_df_temporally(df, train_ratio=train_ratio)
 
-        mask = create_anomalous_mask(df, buffer_hours=buffer_hours)
-        train_mask = create_anomalous_mask(train_df, buffer_hours=buffer_hours)
+        mask = create_anomalous_mask(
+            df, pre_buffer_hours=pre_buffer_hours, post_buffer_hours=post_buffer_hours
+        )
+        train_mask = create_anomalous_mask(
+            train_df,
+            pre_buffer_hours=pre_buffer_hours,
+            post_buffer_hours=post_buffer_hours,
+        )
 
         station_dfs[station_name] = df
         station_masks[station_name] = mask
@@ -87,7 +99,18 @@ def main() -> None:
     )
     parser.add_argument("--window-size", type=int, default=144)
     parser.add_argument("--stride", type=int, default=6)
-    parser.add_argument("--buffer-hours", type=int, default=72)
+    parser.add_argument(
+        "--pre-buffer-hours",
+        type=int,
+        default=ALERT_PRE_BUFFER_HOURS,
+        help="Hours to dilate anomaly mask before alert issue time (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--post-buffer-hours",
+        type=int,
+        default=ALERT_POST_BUFFER_HOURS,
+        help="Hours to dilate anomaly mask after alert issue time (default: %(default)s)",
+    )
     parser.add_argument(
         "--train-ratio",
         type=float,
@@ -109,7 +132,8 @@ def main() -> None:
         station_train_masks,
     ) = load_station_data_with_masks(
         silver_files=silver_files,
-        buffer_hours=args.buffer_hours,
+        pre_buffer_hours=args.pre_buffer_hours,
+        post_buffer_hours=args.post_buffer_hours,
         train_ratio=args.train_ratio,
     )
 
