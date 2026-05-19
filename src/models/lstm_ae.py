@@ -35,7 +35,7 @@ class LSTMAutoencoder(nn.Module):
         )
         self.decoder_lstm3 = nn.LSTM(input_size=64, hidden_size=128, batch_first=True)
         self.decoder_dropout = nn.Dropout(dropout)
-        self.decoder_linear = nn.Linear(128, num_features)
+        self.decoder_linear = nn.Linear(128, 3)  # outputs continuous features only
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """

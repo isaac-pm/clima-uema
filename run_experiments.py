@@ -28,15 +28,19 @@ def train_model(
     checkpoint_path: Path | None = None,
 ):
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, patience=3, factor=0.5,
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+        optimizer, T_0=20, T_mult=2, eta_min=1e-5
     )
 
     if feature_weights is not None:
         feature_weights = feature_weights.to(device)
         def weighted_mse_loss(pred, target):
-            diff = (pred - target) ** 2
-            return torch.mean(diff * feature_weights.view(1, 1, -1))
+            # Compute loss only over continuous features (indices 0-2).
+            # This avoids dividing by the 4 zero-weighted cyclical dimensions,
+            # which would otherwise dilute gradients by 7/3.
+            cont = [0, 1, 2]
+            diff = (pred[:, :, cont] - target[:, :, cont]) ** 2
+            return torch.mean(diff * feature_weights[:3].view(1, 1, -1))
         criterion = weighted_mse_loss
     else:
         criterion = nn.MSELoss()
@@ -68,7 +72,7 @@ def train_model(
                 val_loss += loss.item() * batch_X.size(0)
         val_loss /= get_dataset_size(val_loader)
 
-        scheduler.step(val_loss)
+        scheduler.step(epoch)
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
@@ -92,8 +96,8 @@ CONTINUOUS_FEATURES = [
     "precipitation_mm",
     "luminous_intensity_lux",
 ]
-FEATURE_WEIGHTS = torch.tensor([1.5, 3.0, 1.0])
-TRAINING_FEATURE_WEIGHTS = torch.tensor([1.5, 3.0, 1.0, 0.0, 0.0, 0.0, 0.0])
+FEATURE_WEIGHTS = torch.tensor([1.5, 2.0, 1.0])
+TRAINING_FEATURE_WEIGHTS = torch.tensor([1.5, 2.0, 1.0, 0.0, 0.0, 0.0, 0.0])
 SMOOTHING_WINDOW = 3
 MIN_DETECTION_RATIO_PA = 0.1  # Fraction of segment windows that must be flagged to trigger PA
 
