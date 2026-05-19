@@ -129,33 +129,6 @@ def calibrate_threshold(model, dataloader, percentile=95, feature_weights=None):
     return threshold
 
 
-def calibrate_threshold_optimized(
-    model, calib_loader, val_loader, y_val, feature_weights=None,
-):
-    """Select threshold by maximising F1 on a *labeled validation set*.
-
-    WARNING: ``val_loader`` and ``y_val`` must be a held-out split that is
-    entirely separate from both the training set and the final test set.
-    Passing the test loader here is label leakage and will inflate all metrics.
-    """
-    errors = compute_reconstruction_error(model, calib_loader, feature_weights)
-    thresholds = np.percentile(errors, np.arange(70, 96, 2))
-
-    best_f1 = 0
-    best_threshold = None
-    val_errors = compute_reconstruction_error(model, val_loader, feature_weights)
-
-    for thresh in thresholds:
-        y_pred = (val_errors > thresh).astype(int)
-        f1 = f1_score(y_val, y_pred, zero_division=0)
-        if f1 > best_f1:
-            best_f1 = f1
-            best_threshold = thresh
-
-    if best_threshold is None:
-        best_threshold = np.percentile(errors, 95)
-    return best_threshold
-
 
 def apply_point_adjustment(
     y_true: np.ndarray, y_pred: np.ndarray, min_detection_ratio: float = 0.1

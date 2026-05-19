@@ -285,29 +285,6 @@ def extract_structured_data(
         return None
 
 
-# --- CSV Export ---
-
-
-def save_to_csv(alerts: list[AlertSchema], output_path: Path) -> None:
-    """Save alerts to CSV file.
-
-    Args:
-        alerts: List of AlertSchema instances.
-        output_path: Path to output CSV file.
-    """
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    if not alerts:
-        log.warning("No alerts to save")
-        return
-
-    data = [alert.model_dump() for alert in alerts]
-    df = pd.DataFrame(data)
-
-    df.to_csv(output_path, index=False, encoding="utf-8")
-    log.info(f"Saved {len(alerts)} alerts to {output_path}")
-
-
 def append_to_csv(alert: AlertSchema, output_path: Path) -> None:
     """Append a single alert to CSV file.
 
