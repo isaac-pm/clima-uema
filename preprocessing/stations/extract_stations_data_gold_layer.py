@@ -16,6 +16,7 @@ from preprocessing.stations.config import (
 )
 from preprocessing.stations.gold_pipeline import (
     apply_scalers,
+    collect_boundary_normal_windows,
     create_anomalous_mask,
     find_silver_files,
     fit_strict_scalers,
@@ -34,6 +35,7 @@ def process_station(
     gold_dir: Path,
     window_size: int = 144,
     stride: int = 6,
+    boundary_stride_multiplier: int = 2,
     pre_buffer_hours: int = ALERT_PRE_BUFFER_HOURS,
     post_buffer_hours: int = ALERT_POST_BUFFER_HOURS,
     train_ratio: float = 0.8,
@@ -70,6 +72,19 @@ def process_station(
         stride=stride,
     )
 
+    calib_wins = collect_boundary_normal_windows(
+        apply_scalers(train_df, scalers).values,
+        train_anomalous_mask.values.astype(bool),
+        window_size=window_size,
+        stride=stride,
+        boundary_stride_multiplier=boundary_stride_multiplier,
+    )
+
+    if calib_wins:
+        calib_array = np.stack(calib_wins)
+    else:
+        calib_array = np.empty((0, window_size, arr.shape[1]))
+
     x_train, x_test, y_test = split_windows_temporally(
         normal_wins,
         anomalous_wins,
@@ -81,10 +96,12 @@ def process_station(
     np.save(gold_dir / f"{station_name}_X_train.npy", x_train)
     np.save(gold_dir / f"{station_name}_X_test.npy", x_test)
     np.save(gold_dir / f"{station_name}_y_test.npy", y_test)
+    np.save(gold_dir / f"{station_name}_X_calib.npy", calib_array)
 
     logger.info("Saved %s X_train shape: %s", station_name, x_train.shape)
     logger.info("Saved %s X_test shape: %s", station_name, x_test.shape)
     logger.info("Saved %s y_test shape: %s", station_name, y_test.shape)
+    logger.info("Saved %s X_calib shape: %s", station_name, calib_array.shape)
 
 
 def main() -> None:
@@ -103,6 +120,15 @@ def main() -> None:
     )
     parser.add_argument("--window-size", type=int, default=144)
     parser.add_argument("--stride", type=int, default=6)
+    parser.add_argument(
+        "--boundary-stride-multiplier",
+        type=int,
+        default=2,
+        help=(
+            "Include normal windows within this many strides of anomaly boundaries "
+            "for calibration (default: %(default)s)"
+        ),
+    )
     parser.add_argument(
         "--pre-buffer-hours",
         type=int,
@@ -136,6 +162,7 @@ def main() -> None:
                 args.gold_dir,
                 window_size=args.window_size,
                 stride=args.stride,
+                boundary_stride_multiplier=args.boundary_stride_multiplier,
                 pre_buffer_hours=args.pre_buffer_hours,
                 post_buffer_hours=args.post_buffer_hours,
                 train_ratio=args.train_ratio,

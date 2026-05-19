@@ -175,6 +175,44 @@ def sliding_windows(
     return normal_windows, anomalous_windows, normal_indices + anomalous_indices
 
 
+def collect_boundary_normal_windows(
+    arr: np.ndarray,
+    mask: np.ndarray,
+    window_size: int = 144,
+    stride: int = 6,
+    boundary_stride_multiplier: int = 2,
+) -> List[np.ndarray]:
+    """Collect normal windows near anomalous boundaries.
+
+    A window is included if it contains no anomalous timesteps but is within
+    ``boundary_stride_multiplier * stride`` timesteps of an anomaly.
+    """
+    if boundary_stride_multiplier <= 0:
+        return []
+
+    mask_arr = np.asarray(mask, dtype=bool)
+    boundary_window = max(1, int(boundary_stride_multiplier * stride))
+
+    near_boundary = (
+        pd.Series(mask_arr.astype(int))
+        .rolling(window=boundary_window, min_periods=1, center=True)
+        .max()
+        .astype(bool)
+        .values
+    )
+
+    calib_windows: List[np.ndarray] = []
+    for start in range(0, arr.shape[0] - window_size + 1, stride):
+        end = start + window_size
+        win_mask = mask_arr[start:end]
+        if win_mask.any():
+            continue
+        if near_boundary[start:end].any():
+            calib_windows.append(arr[start:end])
+
+    return calib_windows
+
+
 def split_windows_temporally(
     normal_windows: List[np.ndarray],
     anomalous_windows: List[np.ndarray],
@@ -315,7 +353,8 @@ def build_global_windows(
     """Scale each station with per-station scalers and aggregate windows."""
     all_normal_windows: List[np.ndarray] = []
     all_anomalous_windows: List[np.ndarray] = []
-    all_indices: List[int] = []
+    all_normal_indices: List[int] = []
+    all_anomalous_indices: List[int] = []
 
     for station_name, df in station_dfs.items():
         scalers = station_scalers[station_name]
@@ -328,8 +367,148 @@ def build_global_windows(
             window_size=window_size,
             stride=stride,
         )
+        n_norm = len(normal_wins)
         all_normal_windows.extend(normal_wins)
         all_anomalous_windows.extend(anomalous_wins)
-        all_indices.extend(indices)
+        all_normal_indices.extend(indices[:n_norm])
+        all_anomalous_indices.extend(indices[n_norm:])
 
-    return all_normal_windows, all_anomalous_windows, all_indices
+    return all_normal_windows, all_anomalous_windows, all_normal_indices + all_anomalous_indices
+
+
+def build_global_windows_with_station_ids(
+    station_dfs: Dict[str, pd.DataFrame],
+    station_masks: Dict[str, pd.Series],
+    station_scalers: Dict[str, Dict[str, Any]],
+    station_name_to_id: Dict[str, int],
+    window_size: int,
+    stride: int,
+) -> Tuple[List[np.ndarray], List[np.ndarray], List[int], List[int]]:
+    """Scale each station with per-station scalers and aggregate windows + IDs.
+
+    Indices are returned with all normal positions before all anomalous positions,
+    matching the contract required by ``split_windows_temporally_with_ids``.
+    """
+    all_normal_windows: List[np.ndarray] = []
+    all_anomalous_windows: List[np.ndarray] = []
+    all_normal_indices: List[int] = []
+    all_anomalous_indices: List[int] = []
+    all_normal_station_ids: List[int] = []
+    all_anomalous_station_ids: List[int] = []
+
+    for station_name, df in station_dfs.items():
+        scalers = station_scalers[station_name]
+        scaled_df = apply_scalers(df, scalers)
+        arr = scaled_df.values
+        mask_arr = station_masks[station_name].values.astype(bool)
+        normal_wins, anomalous_wins, indices = sliding_windows(
+            arr,
+            mask_arr,
+            window_size=window_size,
+            stride=stride,
+        )
+        station_id = station_name_to_id[station_name]
+        n_norm = len(normal_wins)
+        all_normal_windows.extend(normal_wins)
+        all_anomalous_windows.extend(anomalous_wins)
+        all_normal_indices.extend(indices[:n_norm])
+        all_anomalous_indices.extend(indices[n_norm:])
+        all_normal_station_ids.extend([station_id] * n_norm)
+        all_anomalous_station_ids.extend([station_id] * len(anomalous_wins))
+
+    return (
+        all_normal_windows,
+        all_anomalous_windows,
+        all_normal_indices + all_anomalous_indices,
+        all_normal_station_ids + all_anomalous_station_ids,
+    )
+
+
+def build_global_calibration_windows(
+    station_train_dfs: Dict[str, pd.DataFrame],
+    station_train_masks: Dict[str, pd.Series],
+    station_scalers: Dict[str, Dict[str, Any]],
+    station_name_to_id: Dict[str, int],
+    window_size: int,
+    stride: int,
+    boundary_stride_multiplier: int = 2,
+) -> Tuple[List[np.ndarray], List[int]]:
+    """Build calibration windows from normal data near anomaly boundaries."""
+    all_calib_windows: List[np.ndarray] = []
+    all_station_ids: List[int] = []
+
+    for station_name, train_df in station_train_dfs.items():
+        scalers = station_scalers[station_name]
+        scaled_train = apply_scalers(train_df, scalers)
+        mask_arr = station_train_masks[station_name].values.astype(bool)
+        calib_windows = collect_boundary_normal_windows(
+            scaled_train.values,
+            mask_arr,
+            window_size=window_size,
+            stride=stride,
+            boundary_stride_multiplier=boundary_stride_multiplier,
+        )
+        all_calib_windows.extend(calib_windows)
+        all_station_ids.extend([station_name_to_id[station_name]] * len(calib_windows))
+
+    return all_calib_windows, all_station_ids
+
+
+def split_windows_temporally_with_ids(
+    normal_windows: List[np.ndarray],
+    anomalous_windows: List[np.ndarray],
+    window_indices: List[int],
+    station_ids: List[int],
+    train_ratio: float = 0.8,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Split windows temporally into train/test sets with station IDs."""
+    if not window_indices:
+        return (
+            np.empty((0,)),
+            np.empty((0,)),
+            np.empty((0,)),
+            np.empty((0,)),
+            np.empty((0,)),
+        )
+
+    sorted_indices = sorted(range(len(window_indices)), key=lambda i: window_indices[i])
+    normal_count = len(normal_windows)
+    train_size = int(normal_count * train_ratio)
+
+    x_train_list: list[np.ndarray] = []
+    x_test_list: list[np.ndarray] = []
+    y_test_list: list[int] = []
+    train_station_ids: list[int] = []
+    test_station_ids: list[int] = []
+
+    for sorted_i in sorted_indices:
+        is_normal = sorted_i < normal_count
+        win = (
+            normal_windows[sorted_i]
+            if is_normal
+            else anomalous_windows[sorted_i - normal_count]
+        )
+        station_id = station_ids[sorted_i]
+
+        if is_normal and sorted_i < train_size:
+            x_train_list.append(win)
+            train_station_ids.append(station_id)
+        else:
+            x_test_list.append(win)
+            test_station_ids.append(station_id)
+            y_test_list.append(0 if is_normal else 1)
+
+    if normal_windows:
+        ref_shape = normal_windows[0].shape
+    elif anomalous_windows:
+        ref_shape = anomalous_windows[0].shape
+    else:
+        ref_shape = (0, 0)
+
+    x_train = np.stack(x_train_list) if x_train_list else np.empty((0, *ref_shape))
+    x_test = np.stack(x_test_list) if x_test_list else np.empty((0, *ref_shape))
+    y_test = np.array(y_test_list, dtype=np.int64)
+    train_ids = np.array(train_station_ids, dtype=np.int64)
+    test_ids = np.array(test_station_ids, dtype=np.int64)
+
+    return x_train, x_test, y_test, train_ids, test_ids

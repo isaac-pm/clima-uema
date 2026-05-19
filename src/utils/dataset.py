@@ -28,6 +28,7 @@ class NpySequenceDataset(Dataset[Union[Tensor, Tuple[Tensor, Tensor]]]):
     def __init__(
         self,
         npy_path: Union[str, Path],
+        station_ids: Optional[Sequence[int]] = None,
         apply_augmentation: bool = False,
         jitter_scale: float = 0.01,
         dropout_prob: float = 0.1,
@@ -60,6 +61,7 @@ class NpySequenceDataset(Dataset[Union[Tensor, Tuple[Tensor, Tensor]]]):
         self.continuous_cols = list(continuous_cols)
         self.cyclical_cols = list(cyclical_cols)
         self.return_target = return_target
+        self.station_ids = list(station_ids) if station_ids is not None else None
 
         self.data = np.load(self.npy_path, mmap_mode=mmap_mode)
         if self.data.ndim != 3:
@@ -150,9 +152,17 @@ class NpySequenceDataset(Dataset[Union[Tensor, Tuple[Tensor, Tensor]]]):
             # 3. Cyclical Feature Preservation:
             # They are inherently preserved because we only applied noise/dropout to continuous_cols.
 
+        station_id = None
+        if self.station_ids is not None:
+            station_id = torch.tensor(self.station_ids[index], dtype=torch.long)
+
         if self.return_target:
-            return sequence, target
-        return sequence
+            if station_id is None:
+                return sequence, target
+            return sequence, target, station_id
+        if station_id is None:
+            return sequence
+        return sequence, station_id
 
 
 def move_to_device(
