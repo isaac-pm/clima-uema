@@ -32,6 +32,8 @@ from shapely.geometry import mapping
 
 warnings.filterwarnings("ignore")
 
+plt.rcParams["font.family"] = "serif"
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Station data
 # "since" / "until" are derived at runtime from the silver-layer CSVs.
@@ -325,7 +327,7 @@ def build_figure(cr: gpd.GeoDataFrame) -> plt.Figure:
     )
 
     # ── Valle Central inset (zoom for SC Finca 1, 2, 3) ──────────────────────
-    zx0, zx1 = -84.063, -84.033
+    zx0, zx1 = -84.058, -84.028
     zy0, zy1 =   9.928,   9.955
 
     axins = ax_map.inset_axes(
