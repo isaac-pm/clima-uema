@@ -1,3 +1,5 @@
+import random
+
 import numpy as np
 import pandas as pd
 import torch
@@ -9,6 +11,11 @@ from pathlib import Path
 from src.models.lstm_ae import LSTMAutoencoder
 from src.utils.dataset import NpySequenceDataset, DeviceDataLoader
 from preprocessing.stations.gold_pipeline import FEATURES
+
+SEED = 42
+random.seed(SEED)
+np.random.seed(SEED)
+torch.manual_seed(SEED)
 
 
 def get_dataset_size(loader) -> int:
