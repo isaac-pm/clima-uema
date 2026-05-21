@@ -294,28 +294,69 @@ def build_figure(cr: gpd.GeoDataFrame) -> plt.Figure:
     cr.plot(ax=ax_map, color="none", edgecolor="#2a2a2a", linewidth=1.3, zorder=5)
 
     # ── Stations ──────────────────────────────────────────────────────────────
+    FINCA_IDS = {
+        "sede-central_finca-1",
+        "sede-central_finca-2",
+        "sede-central_finca-3",
+    }
+    finca_stations = [s for s in STATIONS if s["id"] in FINCA_IDS]
+    finca_centroid_lon = np.mean([s["lon"] for s in finca_stations])
+    finca_centroid_lat = np.mean([s["lat"] for s in finca_stations])
+
     for s in STATIONS:
-        ax_map.plot(
-            s["lon"],
-            s["lat"],
-            "o",
-            markersize=9,
-            markerfacecolor="white",
-            markeredgecolor="#111111",
-            markeredgewidth=1.3,
-            zorder=7,
-        )
+        if s["id"] in FINCA_IDS:
+            continue  # replaced by single centroid marker below
+        ax_map.plot(s["lon"], s["lat"], "o", markersize=9,
+                    markerfacecolor="white", markeredgecolor="#111111",
+                    markeredgewidth=1.3, zorder=7)
         dx, dy = s["offset"]
-        ax_map.annotate(
-            s["label"],
-            xy=(s["lon"], s["lat"]),
-            xytext=(dx, dy),
-            textcoords="offset points",
-            fontsize=7.5,
-            fontweight="bold",
-            color="#1a1a1a",
-            zorder=8,
-        )
+        ax_map.annotate(s["label"], xy=(s["lon"], s["lat"]),
+                        xytext=(dx, dy), textcoords="offset points",
+                        fontsize=7.5, fontweight="bold", color="#1a1a1a", zorder=8)
+
+    # Single centroid marker + label for the finca cluster on the main map
+    ax_map.plot(finca_centroid_lon, finca_centroid_lat, "o", markersize=9,
+                markerfacecolor="white", markeredgecolor="#111111",
+                markeredgewidth=1.3, zorder=7)
+    ax_map.annotate(
+        "SC Fincas 1–3", xy=(finca_centroid_lon, finca_centroid_lat),
+        xytext=(5, 6), textcoords="offset points",
+        fontsize=7.5, fontweight="bold", color="#1a1a1a", zorder=8,
+    )
+
+    # ── Valle Central inset (zoom for SC Finca 1, 2, 3) ──────────────────────
+    zx0, zx1 = -84.063, -84.033
+    zy0, zy1 =   9.928,   9.955
+
+    axins = ax_map.inset_axes(
+        [0.27, 0.04, 0.32, 0.28],   # [left, bottom, width, height] in axes fraction
+        xlim=(zx0, zx1), ylim=(zy0, zy1),
+    )
+    axins.set_facecolor("#cde5f0")
+    cr.plot(ax=axins, color="#e8e4d8", edgecolor="none", zorder=1)
+    axins.imshow(rgba, extent=extent, origin="upper", zorder=2,
+                 interpolation="nearest", aspect="auto")
+    cr.plot(ax=axins, color="none", edgecolor="#2a2a2a", linewidth=0.8, zorder=5)
+
+    for s in finca_stations:
+        axins.plot(s["lon"], s["lat"], "o", markersize=8,
+                   markerfacecolor="white", markeredgecolor="#111111",
+                   markeredgewidth=1.2, zorder=7)
+        axins.annotate(s["label"], xy=(s["lon"], s["lat"]),
+                       xytext=(5, 4), textcoords="offset points",
+                       fontsize=8.5, fontweight="bold", color="#1a1a1a", zorder=8)
+
+    axins.set_xlim(zx0, zx1)
+    axins.set_ylim(zy0, zy1)
+    axins.set_aspect("equal")
+    axins.set_xticks([])
+    axins.set_yticks([])
+    axins.set_title("Valle Central detail", fontsize=7.5, pad=3)
+    for spine in axins.spines.values():
+        spine.set_edgecolor("#cc2222")
+        spine.set_linewidth(1.5)
+
+    ax_map.indicate_inset_zoom(axins, edgecolor="#cc2222", linewidth=1.2, alpha=0.8)
 
     # ── North arrow ───────────────────────────────────────────────────────────
     ax_map.text(
