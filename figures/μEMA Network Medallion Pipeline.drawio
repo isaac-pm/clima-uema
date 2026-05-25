@@ -1,0 +1,73 @@
+<mxfile host="Electron" agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/29.6.6 Chrome/144.0.7559.236 Electron/40.8.4 Safari/537.36" version="29.6.6">
+  <diagram name="Page-1" id="L-Z2ixCnztZ0x5_xmAWI">
+    <mxGraphModel dx="1188" dy="700" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="1s4g9TPYCC4qKmhoWYty-17" edge="1" parent="1" source="1s4g9TPYCC4qKmhoWYty-14" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="1s4g9TPYCC4qKmhoWYty-15">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="1s4g9TPYCC4qKmhoWYty-14" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="" vertex="1">
+          <mxGeometry height="150" width="400" x="220" y="400" as="geometry" />
+        </mxCell>
+        <mxCell id="1s4g9TPYCC4qKmhoWYty-2" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;fontFamily=Serif;fontStyle=1;fontSize=12;" value="Raw Layer" vertex="1">
+          <mxGeometry height="30" width="100" x="220" y="460" as="geometry" />
+        </mxCell>
+        <mxCell id="1s4g9TPYCC4qKmhoWYty-12" edge="1" parent="1" source="1s4g9TPYCC4qKmhoWYty-8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="1s4g9TPYCC4qKmhoWYty-10">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="1s4g9TPYCC4qKmhoWYty-8" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fontFamily=Serif;fontSize=10;align=left;spacing=4;" value="1. Download Station Data" vertex="1">
+          <mxGeometry height="60" width="120" x="320" y="410" as="geometry" />
+        </mxCell>
+        <mxCell id="1s4g9TPYCC4qKmhoWYty-13" edge="1" parent="1" source="1s4g9TPYCC4qKmhoWYty-9" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="1s4g9TPYCC4qKmhoWYty-11">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="1s4g9TPYCC4qKmhoWYty-9" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fontFamily=Serif;fontSize=10;align=left;spacing=4;" value="2. Extract Emergency Alerts" vertex="1">
+          <mxGeometry height="60" width="120" x="320" y="480" as="geometry" />
+        </mxCell>
+        <mxCell id="1s4g9TPYCC4qKmhoWYty-10" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fontFamily=Serif;fontSize=10;align=left;spacing=4;" value="Raw CSVs" vertex="1">
+          <mxGeometry height="60" width="120" x="490" y="410" as="geometry" />
+        </mxCell>
+        <mxCell id="1s4g9TPYCC4qKmhoWYty-11" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fontFamily=Serif;fontSize=10;align=left;spacing=4;" value="Alerts CSV" vertex="1">
+          <mxGeometry height="60" width="120" x="490" y="480" as="geometry" />
+        </mxCell>
+        <mxCell id="1s4g9TPYCC4qKmhoWYty-22" edge="1" parent="1" source="1s4g9TPYCC4qKmhoWYty-15" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="1s4g9TPYCC4qKmhoWYty-21">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="1s4g9TPYCC4qKmhoWYty-15" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="" vertex="1">
+          <mxGeometry height="150" width="400" x="220" y="570" as="geometry" />
+        </mxCell>
+        <mxCell id="1s4g9TPYCC4qKmhoWYty-16" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;fontFamily=Serif;fontStyle=1;fontSize=12;" value="Silver Layer" vertex="1">
+          <mxGeometry height="30" width="100" x="220" y="630" as="geometry" />
+        </mxCell>
+        <mxCell id="1s4g9TPYCC4qKmhoWYty-20" edge="1" parent="1" source="1s4g9TPYCC4qKmhoWYty-18" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="1s4g9TPYCC4qKmhoWYty-19">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="1s4g9TPYCC4qKmhoWYty-18" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fontFamily=Serif;fontSize=10;align=left;spacing=4;" value="&lt;div style=&quot;line-height: 150%;&quot;&gt;1. Consolidation&lt;div&gt;2. Sensor Cutoff Filtering&lt;/div&gt;&lt;div&gt;3. 10-Minute Resampling&lt;/div&gt;&lt;div&gt;4. Overlap Trimming&lt;/div&gt;&lt;div&gt;5. Missing Data Handling&lt;/div&gt;&lt;div&gt;6. Cyclical Time Features&lt;/div&gt;&lt;div&gt;7. Alert Enrichment&lt;/div&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="130" width="120" x="320" y="580" as="geometry" />
+        </mxCell>
+        <mxCell id="1s4g9TPYCC4qKmhoWYty-19" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fontFamily=Serif;fontSize=10;align=left;spacing=4;" value="Silver Data (Cleaned CSVs)" vertex="1">
+          <mxGeometry height="60" width="120" x="490" y="615" as="geometry" />
+        </mxCell>
+        <mxCell id="1s4g9TPYCC4qKmhoWYty-21" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="" vertex="1">
+          <mxGeometry height="150" width="400" x="220" y="740" as="geometry" />
+        </mxCell>
+        <mxCell id="1s4g9TPYCC4qKmhoWYty-23" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;fontFamily=Serif;fontStyle=1;fontSize=12;" value="Gold Layer" vertex="1">
+          <mxGeometry height="30" width="100" x="220" y="800" as="geometry" />
+        </mxCell>
+        <mxCell id="1s4g9TPYCC4qKmhoWYty-26" edge="1" parent="1" source="1s4g9TPYCC4qKmhoWYty-24" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="1s4g9TPYCC4qKmhoWYty-25">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="1s4g9TPYCC4qKmhoWYty-24" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fontFamily=Serif;fontSize=10;align=left;spacing=4;" value="&lt;div style=&quot;line-height: 150%;&quot;&gt;1. Anomaly Mask&lt;/div&gt;&lt;div style=&quot;line-height: 150%;&quot;&gt;2. Train/Test Split&lt;/div&gt;&lt;div style=&quot;line-height: 150%;&quot;&gt;3. Calibration Split&lt;/div&gt;&lt;div style=&quot;line-height: 150%;&quot;&gt;4. Scaler Fitting&lt;/div&gt;&lt;div style=&quot;line-height: 150%;&quot;&gt;5. Sliding Windows&lt;/div&gt;&lt;div style=&quot;line-height: 150%;&quot;&gt;6. Build Station Gold Layer&lt;/div&gt;&lt;div style=&quot;line-height: 150%;&quot;&gt;7. Build Global Gold Layer&lt;/div&gt;" vertex="1">
+          <mxGeometry height="130" width="120" x="320" y="750" as="geometry" />
+        </mxCell>
+        <mxCell id="1s4g9TPYCC4qKmhoWYty-25" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fontFamily=Serif;fontSize=10;align=left;spacing=4;" value="Model-Ready NPY Files" vertex="1">
+          <mxGeometry height="60" width="120" x="490" y="785" as="geometry" />
+        </mxCell>
+        <mxCell id="1s4g9TPYCC4qKmhoWYty-27" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;fontFamily=Serif;fontStyle=1;fontSize=14;" value="μEMA Network Medallion Pipeline" vertex="1">
+          <mxGeometry height="20" width="400" x="220" y="370" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
