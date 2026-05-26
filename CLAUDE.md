@@ -23,9 +23,11 @@ python run_experiments.py
 # Extract emergency alerts from PDFs (requires Google API key)
 python -m preprocessing.emergency_alerts.extract_alerts_data --google-api-key YOUR_KEY
 
-# Download raw station data (GUI)
+# Download raw station data (GUI; connects to Grafana/InfluxDB, downloads in 30-day chunks)
 python data/stations/raw/ucr_uema_data_downloader.py
 ```
+
+`extract_global_gold_layer` accepts CLI overrides: `--window-size`, `--stride`, `--boundary-stride-multiplier`, `--pre-buffer-hours`, `--post-buffer-hours`, `--train-ratio`.
 
 There is no test suite, linter config, or Makefile. `flake8` is in requirements but has no config.
 
@@ -46,16 +48,18 @@ Gold .npy arrays: anomaly-masked, scaled, sliding windows (144 steps = 24h)
 
 ### Preprocessing (`preprocessing/`)
 
-- **`config.py`** — Single source of truth: station names/regions, sensor cutoffs (e.g., hardware replacement dates), alert buffer constants (48h pre-alert, 120h post-alert), excluded station (`recinto-guapiles`).
-- **`silver_pipeline.py`** — Consolidates 3 sensor CSVs per station, applies sensor cutoffs, resamples to 10 min, trims to the common time overlap, interpolates/zero-fills missing values, adds cyclical `hour_sin/cos` and `day_of_year_sin/cos` columns, and merges alert windows with `merge_asof`.
-- **`gold_pipeline.py`** — Dilates alert masks (adds pre/post buffers), fits scalers **only on normal training data** (StandardScaler for pressure, MinMaxScaler for precipitation/lux), extracts sliding windows (stride 6), and writes `X_train`, `X_test`, `y_test`, `X_calib` numpy arrays per station. `X_calib` contains normal windows near anomaly boundaries (not random normal windows) for threshold calibration.
+The `extract_*.py` files are thin CLI entrypoints; all reusable logic lives in `*_pipeline.py`.
+
+- **`config.py`** — Single source of truth: station names/regions, sensor cutoffs (e.g., hardware replacement dates), alert buffer constants (48h pre-alert, 120h post-alert).
+- **`silver_pipeline.py`** — Consolidates 3 sensor CSVs per station, applies sensor cutoffs, resamples to 10 min, trims to the common time overlap, interpolates/zero-fills missing values, adds cyclical `hour_sin/cos` and `day_of_year_sin/cos` columns, and merges alert windows with `merge_asof`. Precipitation gaps fill with 0 (no rain = no accumulation); pressure gaps interpolate linearly; lux gaps fill with 0.
+- **`gold_pipeline.py`** — Dilates alert masks (adds pre/post buffers), fits scalers **only on normal training data** (StandardScaler for pressure, MinMaxScaler for precipitation/lux), extracts sliding windows (stride 6), and writes `X_train`, `X_test`, `y_test`, `X_calib` numpy arrays per station. The 80/20 train/test split of normal windows is **temporal** (earlier 80% → train, later 20% → test); all anomalous windows go to test. `X_calib` contains normal windows near anomaly boundaries (not random normal windows) for threshold calibration.
 - **`extract_global_gold_layer.py`** — Splits each station's history independently, then concatenates into global arrays. Also outputs `station_ids_train.npy`, `station_ids_test.npy`, and `station_ids_calib.npy` for station-aware models.
 - **`extract_alerts_data.py`** — Runs PDF OCR via docling, then Gemini API to extract structured alert records validated with Pydantic. Requires `CUDA_VISIBLE_DEVICES=""` (set internally).
 
 ### Model & Training (`src/`)
 
 - **`src/models/lstm_ae.py`** — `LSTMAutoencoder`: 3-layer stacked LSTM encoder (128→64→16) using the final hidden state as the bottleneck → repeat across `seq_len` → 3-layer LSTM decoder (16→16→64→128) → `Linear(128, 3)`. The output has **3 dimensions** (continuous features only), not 7. Dropout 0.2.
-- **`src/utils/dataset.py`** — `NpySequenceDataset` loads `.npy` files via mmap for memory efficiency. When augmentation is enabled, applies Gaussian noise (sigma = 1% of per-feature std, computed from training indices only) to continuous features and temporal masking (2–4 consecutive steps zeroed at 10% probability). Cyclical features are never augmented. `DeviceDataLoader` wraps `DataLoader` to move batches to device.
+- **`src/utils/dataset.py`** — `NpySequenceDataset` loads `.npy` files fully into memory by default (`mmap_mode=None`); uses chunked iteration for per-feature std computation. When augmentation is enabled, applies Gaussian noise (sigma = 1% of per-feature std, computed from training indices only) to continuous features and temporal masking (2–4 consecutive steps zeroed at 10% probability). Cyclical features are never augmented. `DeviceDataLoader` wraps `DataLoader` to move batches to device.
 
 ### Experiments (`run_experiments.py`)
 
@@ -70,6 +74,11 @@ Key design decisions:
 - Reconstruction error at evaluation time is also computed only on continuous features using `FEATURE_WEIGHTS = [1.5, 2.0, 1.0]`.
 - 3-step rolling mean smoothing on reconstruction errors before thresholding.
 - Results include both raw metrics and Point Adjustment (PA) metrics: a true-anomaly segment is credited as detected if ≥10% of its windows are flagged. FPR outside true-anomaly blocks is unaffected by PA.
+
+Training setup (defined in `run_experiments.py`):
+- Optimizer: AdamW, lr=1e-3; scheduler: CosineAnnealingWarmRestarts (T_0=20, T_mult=2, eta_min=1e-5); gradient clipping max_norm=1.0.
+- Batch size 256; epochs 100; val split 10% (temporal, held from the end of training data).
+- Early stopping patience: 5 for global models, 10 for local models.
 
 ### Feature Vector (7 dimensions, always in this order)
 
@@ -97,6 +106,7 @@ data/
     ├── raw/{2024,2025,2026}/*.pdf
     └── processed/alerts_data.csv
 results/<timestamp>_<scope>_<variant>_metrics.csv
+results/<scope>_<variant>_best_model.pt         # per-run model checkpoint
 ```
 
 ## Important Constraints
