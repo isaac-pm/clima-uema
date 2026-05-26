@@ -2,38 +2,24 @@
 
 ## Commands (run from repo root)
 - `pip install -r requirements.txt`
-- **Station downloader** (Tkinter GUI): `python data/stations/raw/ucr_uema_data_downloader.py`
-- **Alerts extraction** (requires key): `python -m preprocessing.emergency_alerts.extract_alerts_data --google-api-key KEY`
-- **Station pipeline** (must run in order):
-  `python -m preprocessing.stations.extract_stations_data_silver_layer` →
-  `python -m preprocessing.stations.extract_stations_data_gold_layer` →
-  `python -m preprocessing.stations.extract_global_gold_layer`
-- **Experiments**: `python run_experiments.py`
-- All commands run from repo root; the alerts pipeline disables CUDA (`CUDA_VISIBLE_DEVICES=""`) internally.
+- Station downloader (Tkinter GUI; Grafana/InfluxDB): `python data/stations/raw/ucr_uema_data_downloader.py`
+- Alerts extraction (requires key; script sets `CUDA_VISIBLE_DEVICES=""`): `python -m preprocessing.emergency_alerts.extract_alerts_data --google-api-key YOUR_KEY`
+- Station pipeline (order matters): `python -m preprocessing.stations.extract_stations_data_silver_layer` → `python -m preprocessing.stations.extract_stations_data_gold_layer` → `python -m preprocessing.stations.extract_global_gold_layer`
+- Experiments/ablation grid: `python run_experiments.py`
 
-## No lint / typecheck / test infrastructure
-This repo has no test files, no pyproject.toml, no mypy/ruff config, no pre-commit, no Makefile. `flake8` is in requirements but has no config. Do not assume any verification step exists.
+## Outputs / data layout
+- Silver CSVs: `data/stations/processed/silver/<station>.csv`
+- Gold per-station: `data/stations/processed/gold/<station>_{X_train,X_test,y_test,X_calib}.npy`
+- Gold global: `data/stations/processed/gold/global_{X_train,X_test,y_test,X_calib}.npy` + `global_station_ids_{train,test,calib}.npy`
+- Alerts CSV: `data/emergency_alerts/processed/alerts_data.csv`
+- `run_experiments.py` writes `results/<ts>_ablation_dim{dim}_{pipeline}.csv` plus `results/<ts>_ablation_all_seeds_raw.csv` and `results/<ts>_ablation_aggregated.csv`
 
-## Pipeline outputs
-- **Silver**: `data/stations/processed/silver/<station>.csv` — time-aligned CSVs with cyclical features + alert enrichment
-- **Gold (per station)**: `data/stations/processed/gold/<station>_X_train.npy`, `*_X_test.npy`, `*_y_test.npy`, `*_X_calib.npy`
-- **Gold (global)**: same dir, `global_X_train.npy`, `global_X_test.npy`, `global_y_test.npy`, `global_X_calib.npy`, plus `global_station_ids_{train,test,calib}.npy`
-- **Alerts**: `data/emergency_alerts/processed/alerts_data.csv`
+## Pipeline / modeling constraints
+- Alert buffers live in `preprocessing/stations/config.py` (48h pre, 120h post); gold pipelines apply the buffer when building anomaly masks.
+- Scalers are fit on normal training data only; do not fit on anomalous or test windows.
+- Per-station temporal split happens before concatenation in the global gold pipeline; do not concatenate then split.
+- `run_experiments.py` always excludes station `recinto-guapiles`.
 
-## Results
-- `python run_experiments.py` runs 4 combos: Local/Global × Baseline/Augmented
-- Outputs timestamped `results/<ts>_{experiment}_metrics.csv` and `results/*_best_model.pt`
-- Station `recinto-guapiles` is excluded via `IGNORED_STATIONS` in `run_experiments.py`
-- The augmented pipeline uses Gaussian noise + temporal masking on continuous features
-
-## Key modules
-- `preprocessing/stations/config.py` — 10 station names, region mappings, sensor cutoffs, alert buffer windows (pre: 48h, post: 120h)
-- `preprocessing/stations/silver_pipeline.py` — CSV consolidation, 10-min resampling, missing data fill, cyclical encoding, alert merge_asof
-- `preprocessing/stations/gold_pipeline.py` — scaler fitting on normal data only, sliding windows (144 steps × stride 6), temporal train/test split
-- `src/models/lstm_ae.py` — `LSTMAutoencoder` (3-layer LSTM encoder/decoder) and `StationAwareLSTMAutoencoder` (with station embeddings)
-- `src/utils/dataset.py` — `NpySequenceDataset` (mmap, augmentation) and `DeviceDataLoader` wrapper
-
-## Constraints
-- `--google-api-key` required for alerts pipeline; never commit keys
-- Read `NOTICE.md` before using or sharing datasets (UCR property, not open data)
-- `data/stations/raw/ucr_uema_data_downloader.py` connects to a Grafana/InfluxDB instance and is the data entry point
+## Repo constraints
+- No test/lint/typecheck infrastructure; do not assume verification steps exist.
+- Data is UCR property; read `NOTICE.md` before using or sharing datasets.
