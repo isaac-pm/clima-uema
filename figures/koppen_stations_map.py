@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Map of Costa Rica with Köppen-Geiger climate zones (Beck et al. 2018) and
-µEMA meteorological station locations + operational timeline.
+µEMA meteorological station locations.
 
 Usage:
     python figures/koppen_stations_map.py
@@ -17,12 +17,9 @@ import zipfile
 from pathlib import Path
 
 import geopandas as gpd
-import matplotlib.dates as mdates
-import matplotlib.gridspec as gridspec
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 import rasterio
 from matplotlib.lines import Line2D
 from matplotlib_scalebar.scalebar import ScaleBar
@@ -32,11 +29,18 @@ from shapely.geometry import mapping
 
 warnings.filterwarnings("ignore")
 
-plt.rcParams["font.family"] = "serif"
+plt.rcParams["font.family"] = "Times New Roman"
+
+BASE_FONT_SIZE = 12
+TITLE_SIZE = 16
+LABEL_SIZE = 14
+LEGEND_SIZE = 12
+TICK_SIZE = 12
+
+plt.rcParams["font.size"] = BASE_FONT_SIZE
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Station data
-# "since" / "until" are derived at runtime from the silver-layer CSVs.
 # ─────────────────────────────────────────────────────────────────────────────
 STATIONS: list[dict] = [
     {
@@ -59,6 +63,7 @@ STATIONS: list[dict] = [
         "lat": 9.947039492729115,
         "lon": -84.04540844697792,
         "offset": (5, 4),
+        "inset_offset": (-58, -8),
     },
     {
         "id": "sede-atlantico_turrialba",
@@ -109,24 +114,38 @@ STATIONS: list[dict] = [
         "lon": -85.58961405934548,
         "offset": (5, 4),
     },
+    # ── New stations (added to the data downloader, not yet surveyed) ──────
+    # Coordinates below are educated guesses only, not real GPS fixes:
+    # - "sede-central_sabanilla" (db_id UCRCementerio) is guessed near the
+    #   Cementerio de Sabanilla, Montes de Oca, just west of the UCR campus.
+    # - "sede-central_losic-norte-1/2" are guessed just north of the
+    #   sede-central_finca-3 station, whose sensor shares the "Losic"
+    #   building (db_id UCRLosic / UCRLosic2 / LabIII).
+    # Replace with the actual GPS fix once available.
+    {
+        "id": "sede-central_sabanilla",
+        "label": "Sabanilla",
+        "lat": 9.931000,
+        "lon": -84.048000,
+        "offset": (5, 4),
+    },
+    {
+        "id": "sede-central_losic-norte-1",
+        "label": "Losic Norte 1",
+        "lat": 9.949000,
+        "lon": -84.044800,
+        "offset": (5, 4),
+        "inset_offset": (6, -2),
+    },
+    {
+        "id": "sede-central_losic-norte-2",
+        "label": "Losic Norte 2",
+        "lat": 9.950000,
+        "lon": -84.044200,
+        "offset": (5, 4),
+        "inset_offset": (6, 10),
+    },
 ]
-
-_SILVER_DIR = (
-    Path(__file__).parent.parent / "data" / "stations" / "processed" / "silver"
-)
-
-
-def _load_operational_dates() -> None:
-    for s in STATIONS:
-        csv_path = _SILVER_DIR / f"{s['id']}.csv"
-        if not csv_path.exists():
-            raise FileNotFoundError(
-                f"Silver CSV not found for {s['id']}: {csv_path}\n"
-                "Run the preprocessing pipeline first."
-            )
-        times = pd.read_csv(csv_path, usecols=["time"])["time"]
-        s["since"] = pd.to_datetime(times.iloc[0])
-        s["until"] = pd.to_datetime(times.iloc[-1])
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -262,19 +281,8 @@ def build_figure(cr: gpd.GeoDataFrame) -> plt.Figure:
     print("  Loading Köppen raster...")
     rgba, extent, present_codes = _load_koppen_raster(cr_geom, minx, miny, maxx, maxy)
 
-    fig = plt.figure(figsize=(16, 13))
-    gs = gridspec.GridSpec(
-        2,
-        1,
-        height_ratios=[3, 1],
-        hspace=0.12,
-        left=0.04,
-        right=0.97,
-        top=0.95,
-        bottom=0.04,
-    )
-    ax_map = fig.add_subplot(gs[0])
-    ax_tl = fig.add_subplot(gs[1])
+    fig, ax_map = plt.subplots(figsize=(16, 10))
+    fig.subplots_adjust(left=0.04, right=0.97, top=0.95, bottom=0.06)
 
     # ── Ocean background ──────────────────────────────────────────────────────
     ax_map.set_facecolor("#cde5f0")
@@ -296,17 +304,20 @@ def build_figure(cr: gpd.GeoDataFrame) -> plt.Figure:
     cr.plot(ax=ax_map, color="none", edgecolor="#2a2a2a", linewidth=1.3, zorder=5)
 
     # ── Stations ──────────────────────────────────────────────────────────────
-    FINCA_IDS = {
+    CAMPUS_IDS = {
         "sede-central_finca-1",
         "sede-central_finca-2",
         "sede-central_finca-3",
+        "sede-central_sabanilla",
+        "sede-central_losic-norte-1",
+        "sede-central_losic-norte-2",
     }
-    finca_stations = [s for s in STATIONS if s["id"] in FINCA_IDS]
-    finca_centroid_lon = np.mean([s["lon"] for s in finca_stations])
-    finca_centroid_lat = np.mean([s["lat"] for s in finca_stations])
+    campus_stations = [s for s in STATIONS if s["id"] in CAMPUS_IDS]
+    campus_centroid_lon = np.mean([s["lon"] for s in campus_stations])
+    campus_centroid_lat = np.mean([s["lat"] for s in campus_stations])
 
     for s in STATIONS:
-        if s["id"] in FINCA_IDS:
+        if s["id"] in CAMPUS_IDS:
             continue  # replaced by single centroid marker below
         ax_map.plot(
             s["lon"],
@@ -330,10 +341,10 @@ def build_figure(cr: gpd.GeoDataFrame) -> plt.Figure:
             zorder=8,
         )
 
-    # Single centroid marker + label for the finca cluster on the main map
+    # Single centroid marker + label for the campus cluster on the main map
     ax_map.plot(
-        finca_centroid_lon,
-        finca_centroid_lat,
+        campus_centroid_lon,
+        campus_centroid_lat,
         "o",
         markersize=9,
         markerfacecolor="white",
@@ -342,8 +353,8 @@ def build_figure(cr: gpd.GeoDataFrame) -> plt.Figure:
         zorder=7,
     )
     ax_map.annotate(
-        "SC Fincas 1–3",
-        xy=(finca_centroid_lon, finca_centroid_lat),
+        "SC Campus (6)",
+        xy=(campus_centroid_lon, campus_centroid_lat),
         xytext=(5, 6),
         textcoords="offset points",
         fontsize=7.5,
@@ -352,12 +363,12 @@ def build_figure(cr: gpd.GeoDataFrame) -> plt.Figure:
         zorder=8,
     )
 
-    # ── Valle Central inset (zoom for SC Finca 1, 2, 3) ──────────────────────
-    zx0, zx1 = -84.058, -84.028
-    zy0, zy1 = 9.928, 9.955
+    # ── Valle Central inset (zoom for the Sede Central campus cluster) ───────
+    zx0, zx1 = -84.064, -84.028
+    zy0, zy1 = 9.923, 9.956
 
     axins = ax_map.inset_axes(
-        [0.27, 0.04, 0.32, 0.28],  # [left, bottom, width, height] in axes fraction
+        [0.36, 0.12, 0.26, 0.22],  # [left, bottom, width, height] in axes fraction
         xlim=(zx0, zx1),
         ylim=(zy0, zy1),
     )
@@ -373,7 +384,7 @@ def build_figure(cr: gpd.GeoDataFrame) -> plt.Figure:
     )
     cr.plot(ax=axins, color="none", edgecolor="#2a2a2a", linewidth=0.8, zorder=5)
 
-    for s in finca_stations:
+    for s in campus_stations:
         axins.plot(
             s["lon"],
             s["lat"],
@@ -384,10 +395,11 @@ def build_figure(cr: gpd.GeoDataFrame) -> plt.Figure:
             markeredgewidth=1.2,
             zorder=7,
         )
+        dx, dy = s.get("inset_offset", (5, 4))
         axins.annotate(
             s["label"],
             xy=(s["lon"], s["lat"]),
-            xytext=(5, 4),
+            xytext=(dx, dy),
             textcoords="offset points",
             fontsize=8.5,
             fontweight="bold",
@@ -400,7 +412,6 @@ def build_figure(cr: gpd.GeoDataFrame) -> plt.Figure:
     axins.set_aspect("equal")
     axins.set_xticks([])
     axins.set_yticks([])
-    axins.set_title("Valle Central detail", fontsize=7.5, pad=3)
     for spine in axins.spines.values():
         spine.set_edgecolor("#cc2222")
         spine.set_linewidth(1.5)
@@ -453,17 +464,10 @@ def build_figure(cr: gpd.GeoDataFrame) -> plt.Figure:
     ax_map.set_xlim(minx - pad, maxx + pad)
     ax_map.set_ylim(miny - pad, maxy + pad)
     ax_map.set_aspect("equal")
-    ax_map.set_xlabel("Longitude", labelpad=4, fontsize=9)
-    ax_map.set_ylabel("Latitude", labelpad=4, fontsize=9)
+    ax_map.set_xlabel("Longitude", labelpad=4, fontsize=LABEL_SIZE)
+    ax_map.set_ylabel("Latitude", labelpad=4, fontsize=LABEL_SIZE)
     ax_map.grid(True, linestyle=":", linewidth=0.4, alpha=0.55, zorder=0)
-    ax_map.tick_params(labelsize=8)
-    ax_map.set_title(
-        "µEMA Meteorological Station Network — Costa Rica\n"
-        "Köppen-Geiger Climate Classification (Beck et al. 2018)",
-        fontsize=12,
-        fontweight="bold",
-        pad=8,
-    )
+    ax_map.tick_params(labelsize=TICK_SIZE)
 
     # ── Legend (only classes actually present in Costa Rica) ──────────────────
     zone_patches = [
@@ -490,64 +494,12 @@ def build_figure(cr: gpd.GeoDataFrame) -> plt.Figure:
     ax_map.legend(
         handles=zone_patches + [station_handle],
         loc="lower left",
-        fontsize=8.0,
+        fontsize=LEGEND_SIZE,
         framealpha=0.92,
         title="Climate zones & stations",
-        title_fontsize=8.5,
+        title_fontsize=LEGEND_SIZE,
         edgecolor="#aaaaaa",
     )
-
-    # ── Timeline ──────────────────────────────────────────────────────────────
-    ax_tl.set_facecolor("#f5f5f5")
-    for spine in ["top", "right"]:
-        ax_tl.spines[spine].set_visible(False)
-
-    earliest = min(s["since"] for s in STATIONS)
-    latest = max(s["until"] for s in STATIONS)
-    t_start = earliest - pd.DateOffset(months=2)
-    t_end = latest + pd.DateOffset(months=2)
-    ordered = sorted(STATIONS, key=lambda s: s["until"] - s["since"])
-
-    for i, s in enumerate(ordered):
-        since = pd.Timestamp(s["since"])
-        until = pd.Timestamp(s["until"])
-        ax_tl.barh(
-            i,
-            mdates.date2num(until) - mdates.date2num(since),
-            left=mdates.date2num(since),
-            height=0.55,
-            color="#1a6fb5",
-            alpha=0.65,
-            edgecolor="none",
-        )
-        ax_tl.plot(
-            mdates.date2num(since), i, "o", markersize=6, color="#1a6fb5", zorder=5
-        )
-        ax_tl.plot(
-            mdates.date2num(until), i, "o", markersize=6, color="#1a6fb5", zorder=5
-        )
-
-    ax_tl.axvline(
-        mdates.date2num(latest),
-        color="#555555",
-        linestyle="--",
-        linewidth=0.9,
-        zorder=4,
-        label=f"Data cutoff ({latest.strftime('%b %Y')})",
-    )
-
-    ax_tl.set_yticks(range(len(ordered)))
-    ax_tl.set_yticklabels([s["label"] for s in ordered], fontsize=8)
-    ax_tl.set_xlim(mdates.date2num(t_start), mdates.date2num(t_end))
-    ax_tl.set_ylim(-0.6, len(ordered) - 0.4)
-    ax_tl.xaxis.set_major_locator(mdates.MonthLocator(bymonth=[1, 4, 7, 10]))
-    ax_tl.xaxis.set_major_formatter(mdates.DateFormatter("%b %Y"))
-    ax_tl.tick_params(axis="x", rotation=30, labelsize=8)
-    ax_tl.tick_params(axis="y", labelsize=8)
-    ax_tl.set_xlabel("Date", labelpad=4, fontsize=9)
-    ax_tl.set_title("Station Operational Timeline", fontsize=10, pad=4)
-    ax_tl.grid(axis="x", linestyle=":", linewidth=0.4, alpha=0.5)
-    ax_tl.legend(fontsize=7.5, loc="lower left", framealpha=0.85)
 
     return fig
 
@@ -557,8 +509,6 @@ def build_figure(cr: gpd.GeoDataFrame) -> plt.Figure:
 # ─────────────────────────────────────────────────────────────────────────────
 def main() -> None:
     out = Path(__file__).parent / "koppen_stations_map.png"
-    print("Reading operational dates from silver layer...")
-    _load_operational_dates()
     print("Loading Costa Rica boundary...")
     cr = _load_costa_rica()
     print("Building figure...")

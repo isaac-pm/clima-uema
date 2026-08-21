@@ -20,6 +20,7 @@ Requirements:
     - tkinter (included with Python standard library)
 """
 
+import calendar
 import csv
 import json
 import os
@@ -47,66 +48,154 @@ UNIT_MAP = {
     "pressure": "value_hPa",
 }
 
+# Each station's `tags` list holds one entry per InfluxDB `tipo` identity the
+# physical device has reported under, oldest first. Devices get re-flashed or
+# reconfigured over their lifetime and start publishing under a new `tipo`
+# tag with no overlap in time between generations, so downloading walks the
+# list in order and appends every generation's data into the same CSV. This
+# makes a from-scratch download on an empty disk produce the same seamless,
+# concatenated history as incrementally re-running on top of existing files.
 ALL_STATIONS = {
     "00": {
-        "db_id": "UCREscFis",
         "filename": "sede-central_finca-1",
-        "field_overrides": {"pressure": "BME"},
-        "pressure_offset": 136.3,
+        "tags": [
+            {
+                "db_id": "UCREscFis",
+                "field_overrides": {"pressure": "BME"},
+                "pressure_offset": 136.3,
+            },
+        ],
     },
     "01": {
-        "db_id": "UCRPuntarenas",
         "filename": "recinto-esparza",
-        "field_overrides": {"pressure": "LPS"},
-        "pressure_offset": 23.8,
+        "tags": [
+            {
+                "db_id": "UCRPuntarenas",
+                "field_overrides": {"pressure": "LPS"},
+                "pressure_offset": 23.8,
+            },
+        ],
     },
     "02": {
-        "db_id": "UCRGolfito",
         "filename": "sede-sur_golfito",
-        "field_overrides": {"pressure": "LPS"},
-        "pressure_offset": 3.1,
+        "tags": [
+            {
+                "db_id": "UCRGolfito",
+                "field_overrides": {"pressure": "LPS"},
+                "pressure_offset": 3.1,
+            },
+            {
+                "db_id": "UCRGolfitos",
+                "field_overrides": {"pressure": "BME"},
+                "pressure_offset": 3.1,
+            },
+        ],
     },
     "03": {
-        "db_id": "UCRGuapiles",
         "filename": "recinto-guapiles",
-        "field_overrides": {"pressure": "BME"},
-        "pressure_offset": 32.6,
+        "tags": [
+            {
+                "db_id": "UCRGuapiles",
+                "field_overrides": {"pressure": "BME"},
+                "pressure_offset": 32.6,
+            },
+        ],
     },
     "04": {
-        "db_id": "UCRLiberia",
         "filename": "sede-guanacaste_liberia",
-        "field_overrides": {"pressure": "LPS"},
-        "pressure_offset": 15.3,
+        "tags": [
+            {
+                "db_id": "UCRLiberia",
+                "field_overrides": {"pressure": "LPS"},
+                "pressure_offset": 15.3,
+            },
+            {
+                "db_id": "UCRLiberia2",
+                "field_overrides": {"pressure": "LPS"},
+                "pressure_offset": 15.3,
+            },
+        ],
     },
     "05": {
-        "db_id": "UCRLimon",
         "filename": "sede-caribe_limon",
-        "field_overrides": {"pressure": "BME"},
-        "pressure_offset": 7.4,
+        "tags": [
+            {
+                "db_id": "UCRLimon",
+                "field_overrides": {"pressure": "BME"},
+                "pressure_offset": 7.4,
+            },
+        ],
     },
     "06": {
-        "db_id": "UCRturrialba",
         "filename": "sede-atlantico_turrialba",
-        "field_overrides": {"pressure": "LPS"},
-        "pressure_offset": 75.1,
+        "tags": [
+            {
+                "db_id": "UCRturrialba",
+                "field_overrides": {"pressure": "LPS"},
+                "pressure_offset": 75.1,
+            },
+        ],
     },
     "07": {
-        "db_id": "UCRCigefi",
         "filename": "sede-central_finca-2",
-        "field_overrides": {"pressure": "LPS"},
-        "pressure_offset": 138.3,
+        "tags": [
+            {
+                "db_id": "UCRCigefi",
+                "field_overrides": {"pressure": "LPS"},
+                "pressure_offset": 138.3,
+            },
+        ],
     },
     "08": {
-        "db_id": "UCRLosic",
         "filename": "sede-central_finca-3",
-        "field_overrides": {"pressure": "LPS"},
-        "pressure_offset": 138.3,
+        "tags": [
+            {
+                "db_id": "UCRLosic",
+                "field_overrides": {"pressure": "LPS"},
+                "pressure_offset": 138.3,
+            },
+        ],
     },
     "09": {
-        "db_id": "UCRSantaCruz",
         "filename": "recinto-santa-cruz",
-        "field_overrides": {"pressure": "LPS"},
-        "pressure_offset": 5.9,
+        "tags": [
+            {
+                "db_id": "UCRSantaCruz",
+                "field_overrides": {"pressure": "LPS"},
+                "pressure_offset": 5.9,
+            },
+        ],
+    },
+    "10": {
+        "filename": "sede-central_sabanilla",
+        "tags": [
+            {
+                "db_id": "UCRCementerio",
+                "field_overrides": {"pressure": "LPS"},
+                "pressure_offset": 136.3,
+            },
+        ],
+    },
+    "11": {
+        "filename": "sede-central_losic-norte-1",
+        "tags": [
+            {
+                "db_id": "LabIII",
+                "field_overrides": {"pressure": "LPS"},
+                "pressure_offset": 138.3,
+            },
+        ],
+    },
+    "12": {
+        "filename": "sede-central_losic-norte-2",
+        "tags": [
+            {
+                "db_id": "UCRLosic2",
+                "field_overrides": {"pressure": "BME"},
+                "pressure_offset": 138.3,
+                "precip_multiplier": 0.285,
+            },
+        ],
     },
 }
 
@@ -124,6 +213,7 @@ def build_flux_payload(
     end_epoch: int,
     datasource_uid: str,
     pressure_offset: float = 0.0,
+    precip_multiplier: float = 0.2794,
 ) -> dict[str, Any]:
     """Build a Flux query payload for InfluxDB data retrieval.
 
@@ -135,6 +225,8 @@ def build_flux_payload(
         end_epoch: End timestamp in milliseconds since epoch.
         datasource_uid: The UID of the InfluxDB datasource in Grafana.
         pressure_offset: Calibration offset to apply to pressure readings.
+        precip_multiplier: Calibration constant for the rain gauge (tipping
+            bucket volume), applied to raw precipitation readings.
 
     Returns:
         A dictionary containing the query payload for the Grafana API.
@@ -146,7 +238,9 @@ def build_flux_payload(
 
     if feature_name == "precipitation":
         agg_function = "sum"
-        map_logic = "|> map(fn: (r) => ({ r with _value: r._value * 0.2794 }))"
+        map_logic = (
+            f"|> map(fn: (r) => ({{ r with _value: r._value * {precip_multiplier} }}))"
+        )
         empty_logic = "true"
         fill_logic = "|> fill(value: 0.0)"
     elif feature_name == "pressure":
@@ -237,12 +331,7 @@ def fetch_and_save_data(
             if stop_event and stop_event.is_set():
                 log("[!] Stop requested. Aborting remaining stations.")
                 return
-            station_db_id = station_info["db_id"]
             station_filename = station_info["filename"]
-            actual_db_field = station_info.get("field_overrides", {}).get(
-                feature_name, db_field
-            )
-            pressure_offset = station_info.get("pressure_offset", 0.0)
             filepath = os.path.join(
                 base_dir,
                 feature_name,
@@ -252,97 +341,110 @@ def fetch_and_save_data(
             log(f"\n--- Processing {feature_name} for {station_filename} ---")
 
             temp_path = f"{filepath}.tmp"
+            total_rows = 0
+            completed = True
             with open(temp_path, mode="w", newline="") as file:
                 writer = csv.writer(file)
                 writer.writerow(["time", column_header])
 
-                total_rows = 0
-                current_start = start_date
-
-                completed = True
-                while current_start < end_date:
-                    if stop_event and stop_event.is_set():
-                        log("[!] Stop requested. Aborting current station download.")
-                        completed = False
-                        break
-                    current_end = current_start + timedelta(days=30)
-                    if current_end > end_date:
-                        current_end = end_date
-
-                    start_epoch = int(current_start.timestamp() * 1000)
-                    end_epoch = int(current_end.timestamp() * 1000)
-
-                    log(
-                        "  Fetching: "
-                        f"{current_start.strftime('%Y-%m-%d')} to "
-                        f"{current_end.strftime('%Y-%m-%d')}..."
+                for tag_info in station_info["tags"]:
+                    station_db_id = tag_info["db_id"]
+                    actual_db_field = tag_info.get("field_overrides", {}).get(
+                        feature_name, db_field
                     )
+                    pressure_offset = tag_info.get("pressure_offset", 0.0)
+                    precip_multiplier = tag_info.get("precip_multiplier", 0.2794)
 
-                    payload = build_flux_payload(
-                        feature_name,
-                        actual_db_field,
-                        station_db_id,
-                        start_epoch,
-                        end_epoch,
-                        datasource_uid,
-                        pressure_offset,
-                    )
-
-                    attempt = 0
-                    while attempt < max_retries:
-                        try:
-                            response = requests.post(
-                                api_endpoint,
-                                auth=auth,
-                                headers=headers,
-                                data=json.dumps(payload),
-                            )
-                            response.raise_for_status()
-                            data = response.json()
-
-                            frames = data.get("results", {}).get("A", {}).get("frames", [])
-                            if frames:
-                                frame = frames[0]
-                                if (
-                                    "data" in frame
-                                    and "values" in frame["data"]
-                                    and len(frame["data"]["values"]) >= 2
-                                ):
-                                    time_array = frame["data"]["values"][0]
-                                    value_array = frame["data"]["values"][1]
-
-                                    for t, v in zip(time_array, value_array):
-                                        dt = datetime.fromtimestamp(
-                                            t / 1000.0, tz=timezone.utc
-                                        ).astimezone(CR_TZ)
-                                        writer.writerow(
-                                            [dt.strftime("%Y-%m-%d %H:%M:%S"), v]
-                                        )
-                                        total_rows += 1
-                                else:
-                                    log(
-                                        "  [!] Frame found but no values present. Skipping."
-                                    )
-                            else:
-                                log("  [!] No frames returned. Skipping.")
+                    current_start = start_date
+                    while current_start < end_date:
+                        if stop_event and stop_event.is_set():
+                            log("[!] Stop requested. Aborting current station download.")
+                            completed = False
                             break
+                        current_end = current_start + timedelta(days=30)
+                        if current_end > end_date:
+                            current_end = end_date
 
-                        except requests.exceptions.RequestException as e:
-                            attempt += 1
-                            if attempt >= max_retries:
-                                log(
-                                    "  [!] HTTP Error after retries: "
-                                    f"{e} (range {current_start:%Y-%m-%d} to {current_end:%Y-%m-%d})"
+                        start_epoch = int(current_start.timestamp() * 1000)
+                        end_epoch = int(current_end.timestamp() * 1000)
+
+                        log(
+                            f"  Fetching ({station_db_id}): "
+                            f"{current_start.strftime('%Y-%m-%d')} to "
+                            f"{current_end.strftime('%Y-%m-%d')}..."
+                        )
+
+                        payload = build_flux_payload(
+                            feature_name,
+                            actual_db_field,
+                            station_db_id,
+                            start_epoch,
+                            end_epoch,
+                            datasource_uid,
+                            pressure_offset,
+                            precip_multiplier,
+                        )
+
+                        attempt = 0
+                        while attempt < max_retries:
+                            try:
+                                response = requests.post(
+                                    api_endpoint,
+                                    auth=auth,
+                                    headers=headers,
+                                    data=json.dumps(payload),
                                 )
-                                break
-                            backoff = retry_delay * (2 ** (attempt - 1))
-                            log(
-                                "  [!] HTTP Error: "
-                                f"{e} (retry {attempt}/{max_retries} in {backoff:.1f}s)"
-                            )
-                            threading.Event().wait(backoff)
+                                response.raise_for_status()
+                                data = response.json()
 
-                    current_start = current_end
+                                frames = data.get("results", {}).get("A", {}).get(
+                                    "frames", []
+                                )
+                                if frames:
+                                    frame = frames[0]
+                                    if (
+                                        "data" in frame
+                                        and "values" in frame["data"]
+                                        and len(frame["data"]["values"]) >= 2
+                                    ):
+                                        time_array = frame["data"]["values"][0]
+                                        value_array = frame["data"]["values"][1]
+
+                                        for t, v in zip(time_array, value_array):
+                                            dt = datetime.fromtimestamp(
+                                                t / 1000.0, tz=timezone.utc
+                                            ).astimezone(CR_TZ)
+                                            writer.writerow(
+                                                [dt.strftime("%Y-%m-%d %H:%M:%S"), v]
+                                            )
+                                            total_rows += 1
+                                    else:
+                                        log(
+                                            "  [!] Frame found but no values present. Skipping."
+                                        )
+                                else:
+                                    log("  [!] No frames returned. Skipping.")
+                                break
+
+                            except requests.exceptions.RequestException as e:
+                                attempt += 1
+                                if attempt >= max_retries:
+                                    log(
+                                        "  [!] HTTP Error after retries: "
+                                        f"{e} (range {current_start:%Y-%m-%d} to {current_end:%Y-%m-%d})"
+                                    )
+                                    break
+                                backoff = retry_delay * (2 ** (attempt - 1))
+                                log(
+                                    "  [!] HTTP Error: "
+                                    f"{e} (retry {attempt}/{max_retries} in {backoff:.1f}s)"
+                                )
+                                threading.Event().wait(backoff)
+
+                        current_start = current_end
+
+                    if not completed:
+                        break
 
             if completed:
                 os.replace(temp_path, filepath)
@@ -351,6 +453,109 @@ def fetch_and_save_data(
                 if os.path.exists(temp_path):
                     os.remove(temp_path)
     log("\n=== ALL DOWNLOADS COMPLETE ===")
+
+
+class DatePickerPopup(tk.Toplevel):
+    """A small popup calendar for picking a date into an Entry widget.
+
+    Built entirely from the standard library (tkinter + calendar) so it adds
+    no extra dependency beyond what the rest of the app already needs.
+    """
+
+    def __init__(self, parent: tk.Widget, target_entry: ttk.Entry) -> None:
+        """Open the popup calendar next to `target_entry`.
+
+        Args:
+            parent: The widget to anchor this popup to (used for
+                transient/modal behavior).
+            target_entry: The Entry widget to write the picked date into,
+                in "YYYY-MM-DD" format.
+        """
+        super().__init__(parent)
+        self.target_entry = target_entry
+        self.overrideredirect(True)
+        self.transient(parent)
+
+        try:
+            initial = datetime.strptime(target_entry.get().strip(), "%Y-%m-%d")
+        except ValueError:
+            initial = datetime.now()
+        self.current_year = initial.year
+        self.current_month = initial.month
+
+        self.frame = ttk.Frame(self, borderwidth=1, relief="solid")
+        self.frame.pack()
+        self._render()
+
+        x = target_entry.winfo_rootx()
+        y = target_entry.winfo_rooty() + target_entry.winfo_height()
+        self.geometry(f"+{x}+{y}")
+
+        self.bind("<FocusOut>", lambda e: self.destroy())
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.focus_set()
+        self.grab_set()
+
+    def _render(self) -> None:
+        for widget in self.frame.winfo_children():
+            widget.destroy()
+
+        header = ttk.Frame(self.frame)
+        header.grid(row=0, column=0, columnspan=7, sticky="ew", padx=2, pady=2)
+        ttk.Button(header, text="‹", width=3, command=self._prev_month).pack(
+            side="left"
+        )
+        ttk.Label(
+            header,
+            text=f"{calendar.month_name[self.current_month]} {self.current_year}",
+            width=16,
+            anchor="center",
+        ).pack(side="left", expand=True)
+        ttk.Button(header, text="›", width=3, command=self._next_month).pack(
+            side="right"
+        )
+
+        for col, name in enumerate(["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"]):
+            ttk.Label(self.frame, text=name, width=3, anchor="center").grid(
+                row=1, column=col
+            )
+
+        weeks = calendar.Calendar(firstweekday=0).monthdayscalendar(
+            self.current_year, self.current_month
+        )
+        for row_idx, week in enumerate(weeks, start=2):
+            for col_idx, day in enumerate(week):
+                if day == 0:
+                    ttk.Label(self.frame, text="", width=3).grid(
+                        row=row_idx, column=col_idx
+                    )
+                else:
+                    ttk.Button(
+                        self.frame,
+                        text=str(day),
+                        width=3,
+                        command=lambda d=day: self._select_day(d),
+                    ).grid(row=row_idx, column=col_idx, padx=1, pady=1)
+
+    def _prev_month(self) -> None:
+        self.current_month -= 1
+        if self.current_month == 0:
+            self.current_month = 12
+            self.current_year -= 1
+        self._render()
+
+    def _next_month(self) -> None:
+        self.current_month += 1
+        if self.current_month == 13:
+            self.current_month = 1
+            self.current_year += 1
+        self._render()
+
+    def _select_day(self, day: int) -> None:
+        date_str = f"{self.current_year:04d}-{self.current_month:02d}-{day:02d}"
+        self.target_entry.delete(0, tk.END)
+        self.target_entry.insert(0, date_str)
+        self.destroy()
 
 
 # UI application.
@@ -412,13 +617,25 @@ class DownloaderApp:
         self.start_entry = ttk.Entry(date_frame)
         self.start_entry.insert(0, "2024-01-01")
         self.start_entry.grid(row=0, column=1, sticky="w", padx=5)
+        ttk.Button(
+            date_frame,
+            text="\U0001f4c5",
+            width=3,
+            command=lambda: DatePickerPopup(self.root, self.start_entry),
+        ).grid(row=0, column=2, sticky="w")
 
         ttk.Label(date_frame, text="End Date:").grid(
-            row=0, column=2, sticky="w", padx=5
+            row=0, column=3, sticky="w", padx=5
         )
         self.end_entry = ttk.Entry(date_frame)
         self.end_entry.insert(0, "2026-03-01")
-        self.end_entry.grid(row=0, column=3, sticky="w", padx=5)
+        self.end_entry.grid(row=0, column=4, sticky="w", padx=5)
+        ttk.Button(
+            date_frame,
+            text="\U0001f4c5",
+            width=3,
+            command=lambda: DatePickerPopup(self.root, self.end_entry),
+        ).grid(row=0, column=5, sticky="w")
 
         # Feature selection.
         feat_frame = ttk.LabelFrame(root, text="Features", padding=10)

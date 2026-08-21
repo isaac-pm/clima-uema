@@ -20,6 +20,9 @@ STATION_NAMES: list[str] = [
     "recinto-esparza",
     "recinto-guapiles",
     "recinto-santa-cruz",
+    "sede-central_sabanilla",
+    "sede-central_losic-norte-1",
+    "sede-central_losic-norte-2",
 ]
 
 # Keep specific regions before broader labels.
@@ -39,6 +42,12 @@ STATION_REGIONS: dict[str, list[str]] = {
     "recinto-esparza": ["Pacífico Central"],
     "recinto-guapiles": ["Caribe Norte", "Región Caribe", "Huetar Caribe", "Caribe"],
     "recinto-santa-cruz": ["Pacífico Norte"],
+    # Region inferred from shared pressure calibration offset with the
+    # existing sede-central_finca-* stations (136.3/138.3) — not yet
+    # confirmed with station maintainers.
+    "sede-central_sabanilla": ["Valle Central", "Región Central", "Central"],
+    "sede-central_losic-norte-1": ["Valle Central", "Región Central", "Central"],
+    "sede-central_losic-norte-2": ["Valle Central", "Región Central", "Central"],
 }
 
 GENERAL_REGIONS = [
